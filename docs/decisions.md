@@ -14,3 +14,17 @@ One line per decision: date, decision, reason. Newest at the bottom.
 | 2026-11-27 | Conservative defaults: 60 writes/hour, backups 90 days, logs 180 days, responses about 25,000 characters | Safety first; all configurable |
 | 2026-11-27 | Egress limited to World Anvil through an egress proxy in docker-compose, from the first hosted release | Reproducible anywhere without touching the host firewall; World Anvil's IPs change (Cloudflare) so filter by domain |
 | 2026-11-27 | Work split into stages A–F, each with its own brief, plan approval before code | Keeps each step reviewable; the owner reviews plans and PRs as a counterweight |
+| 2026-11-27 | A registry field is `verified` only when the live-test harness has observed it in a real response; spec and notes entries start `unverified` | Notes can be wrong or outdated; only a real response is evidence |
+| 2026-11-27 | An element's world is resolved from its own `world` field, else through its parent chain; reads are refused only when no chain is found | The `world` field is missing at some granularities; refusing too eagerly would block legitimate reads, guessing would leak |
+| 2026-11-27 | `blocked` worlds answer exactly like missing elements | An attacker-controlled prompt must not learn that a blocked element exists |
+| 2026-11-27 | World access is checked before any list call to World Anvil | Nothing about a blocked world should even be fetched when it can be avoided |
+| 2026-11-27 | Remembered `updateDate`s (and resolved worlds) are stored per MCP session | HTTP mode serves several clients; one client's reads must not authorize another's writes |
+| 2026-11-27 | Truncation notices suggest `fields` for `wa_get` and `offset` for lists | Each points to the parameter that actually helps |
+| 2026-11-27 | Access file variable: `WA_ACCESS_FILE`; size limit variable: `WA_MAX_RESPONSE_CHARS` | Consistent `WA_` prefix |
+| 2026-11-27 | Runtime dependencies: MCP SDK and zod only (zod is required by the SDK for tool schemas) | Minimal dependencies |
+| 2026-11-27 | Live tests read keys from files only; the report holds structure only (field names, counts, pass/fail) | Runs on the owner's VPS where keys are files; the report must be pasteable in a public PR |
+| 2026-11-27 | Node.js 22 or newer | Current LTS line |
+| 2026-11-27 | Stage A live run: observed fields promoted to `verified` through `src/registry/observed.ts` only; subscriber groups, timelines and history stay `unverified` until stage B creates test instances | Only real responses count as evidence; one place to audit what was observed |
+| 2026-11-27 | The `success` flag is stripped from compact output and from the registry comparison | It is a response flag, not an element field |
+| 2026-11-27 | `WA_MAX_RESPONSE_CHARS` accepted by the owner | The architecture already makes the max size configurable |
+| 2026-11-27 | The cloud development environment may reach worldanvil.com to read the public spec, but never holds keys; live tests run only on the owner's VPS | Keys stay on infrastructure the owner controls |

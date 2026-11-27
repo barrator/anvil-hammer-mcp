@@ -51,7 +51,10 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - Base URL: `https://www.worldanvil.com/api/external/boromir/`. JSON only.
 - Required headers on every call: `x-application-key`, `x-auth-token`, `Content-Type: application/json`, and a `User-Agent` of the form `anvil-hammer-mcp (<repo url>, <version>)`.
 - Verbs: `GET` read, `PUT` create, `PATCH` update (only the fields sent), `DELETE` delete. List endpoints are `POST` with a body `{"limit": "50", "offset": "0"}` (string values, max 50).
-- Unknown routes return an HTML 404 page, not JSON. Handle it.
+- Unknown routes return an HTML 404 page (`text/html`), not JSON. Handle it. Some errors also come back as HTTP 200 with `{"success": false, ...}`.
+- Bad or missing credentials: HTTP 401 with JSON `{"success": false, "error": "access_denied"}`.
+- The world reference (`world`) is not present at every granularity. Observed live: articles from granularity 1; categories and secrets from granularity 2. `secret.article` also appears only at granularity 2. Never assume it: resolve through the parent chain (history → `timelines` → timeline → world; secret → `article` → world; category → `parent`). Subscriber groups, timelines, history events and the category parent chain are not yet observed live.
+- Single-element responses include a `success` flag. It is a response flag, not an element field: it is stripped from tool output and ignored by the registry comparison.
 - No documented rate limit. Space calls about 750 ms apart and back off on 429.
 - Article templates: `templateType` in lowercase works for every template (`person`, `organization`, `rank`, `settlement`…) even though the spec only lists `article`. A new article is automatically marked WIP as well as draft.
 - Template-specific fields are written and read back like any other field. The official spec documents fields for one template only (Location); read others from an existing article at granularity 2.
@@ -64,6 +67,19 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - Text is stored as BBCode, unchanged. Sidebar fields accept `--Key::Value--`, displayed as a "Key: Value" line.
 - The API is beta: all routes live in the registry so they can be fixed in one place.
 
+## Server rules (in code)
+
+- **Access before content.** A world's level is checked before any World Anvil call that targets it (world reads, every list). An element read by ID is resolved to its world (own `world` field, else the parent chain) before anything is returned; if no chain leads to a world, the read is refused. A `blocked` world answers exactly like a missing element, everywhere.
+- **Per-session state.** Remembered `updateDate`s and resolved worlds are stored per MCP session, never globally (HTTP mode serves several clients).
+- **Truncation.** Over the size limit, `wa_get` suggests `fields`; lists suggest `offset`.
+- **Registry status.** A field is `verified` only once a live-test run has observed it in a real response. Entries from the spec or from the quirks above start `unverified`. Promote them from the live report (`registry.observed`) by adding them to `src/registry/observed.ts`, the only place that marks anything verified.
+
 ## Live tests
 
 Offline tests (`npm test`) never touch the network. Live tests (`npm run test:live`) are manual, never run in CI, and must go through the live-test harness: only the test world declared in a gitignored local file can be touched, and only elements whose title starts with `MCP-TEST-` and that are recorded in the gitignored test ledger. Never weaken the harness.
+
+- Config: `live-test.config.json` (gitignored), `{"testWorldId": "...", "ledgerFile": "live-test.ledger.json"}`; path overridable with `WA_LIVE_CONFIG`.
+- Keys: files only, `WA_APP_KEY_FILE` and `WA_AUTH_TOKEN_FILE`.
+- Command: `WA_APP_KEY_FILE=... WA_AUTH_TOKEN_FILE=... npm run test:live`.
+- Output: `live-test-report.json` (gitignored) and a printed summary holding structure only (field names, counts, pass/fail), safe to paste in a PR.
+- The harness (`live/harness.ts`) has offline tests (`test/live-harness.test.ts`); they must keep passing.
