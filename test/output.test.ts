@@ -35,6 +35,21 @@ describe("compact output", () => {
     });
   });
 
+  it("strips the success response flag at the top level only", () => {
+    expect(compactElement({ id: "x", success: true, nested: { success: true, a: 1 } })).toEqual({
+      id: "x",
+      nested: { success: true, a: 1 },
+    });
+  });
+
+  it("wa_get never returns the success flag", async () => {
+    const data = seedData();
+    data.articles[0]!.success = true;
+    const { call } = await connect({ data });
+    const r = await call("wa_get", { type: "article", id: "article-open-0001" });
+    expect(untrustedJson(r.text)).not.toHaveProperty("success");
+  });
+
   it("keeps only requested fields plus id", () => {
     expect(pickFields({ id: "1", a: 1, b: 2 }, ["b"])).toEqual({ id: "1", b: 2 });
   });

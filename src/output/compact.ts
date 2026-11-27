@@ -1,5 +1,8 @@
 import type { Json } from "../api/client.js";
 
+/** Response flags World Anvil adds to element bodies; not element fields. */
+export const RESPONSE_FLAGS = new Set(["success"]);
+
 const isEmpty = (v: unknown) =>
   v === null ||
   v === undefined ||
@@ -31,6 +34,7 @@ function compactInner(v: unknown, depth: number): unknown {
     if (depth > 0 && isLinkedElement(o)) return reduceLink(o);
     const out: Json = {};
     for (const [k, val] of Object.entries(o)) {
+      if (depth === 0 && RESPONSE_FLAGS.has(k)) continue;
       const c = compactInner(val, depth + 1);
       if (!isEmpty(c)) out[k] = c;
     }
@@ -40,7 +44,7 @@ function compactInner(v: unknown, depth: number): unknown {
 }
 
 /**
- * Compact an element: drop empty fields, reduce linked elements to
+ * Compact an element: drop response flags (`success`) and empty fields, reduce linked elements to
  * {id, title, type}. The top-level element itself is kept whole.
  */
 export function compactElement(el: Json): Json {

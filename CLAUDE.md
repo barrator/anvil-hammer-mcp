@@ -53,7 +53,8 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - Verbs: `GET` read, `PUT` create, `PATCH` update (only the fields sent), `DELETE` delete. List endpoints are `POST` with a body `{"limit": "50", "offset": "0"}` (string values, max 50).
 - Unknown routes return an HTML 404 page (`text/html`), not JSON. Handle it. Some errors also come back as HTTP 200 with `{"success": false, ...}`.
 - Bad or missing credentials: HTTP 401 with JSON `{"success": false, "error": "access_denied"}`.
-- The world reference (`world`) is not present at every granularity (the spec shows it from granularity 1 or 2 depending on the type). Never assume it: resolve through the parent chain (history → `timelines` → timeline → world; secret → `article` → world; category → `parent`). The live report records where it actually appears.
+- The world reference (`world`) is not present at every granularity. Observed live: articles from granularity 1; categories and secrets from granularity 2. `secret.article` also appears only at granularity 2. Never assume it: resolve through the parent chain (history → `timelines` → timeline → world; secret → `article` → world; category → `parent`). Subscriber groups, timelines, history events and the category parent chain are not yet observed live.
+- Single-element responses include a `success` flag. It is a response flag, not an element field: it is stripped from tool output and ignored by the registry comparison.
 - No documented rate limit. Space calls about 750 ms apart and back off on 429.
 - Article templates: `templateType` in lowercase works for every template (`person`, `organization`, `rank`, `settlement`…) even though the spec only lists `article`. A new article is automatically marked WIP as well as draft.
 - Template-specific fields are written and read back like any other field. The official spec documents fields for one template only (Location); read others from an existing article at granularity 2.
@@ -71,7 +72,7 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - **Access before content.** A world's level is checked before any World Anvil call that targets it (world reads, every list). An element read by ID is resolved to its world (own `world` field, else the parent chain) before anything is returned; if no chain leads to a world, the read is refused. A `blocked` world answers exactly like a missing element, everywhere.
 - **Per-session state.** Remembered `updateDate`s and resolved worlds are stored per MCP session, never globally (HTTP mode serves several clients).
 - **Truncation.** Over the size limit, `wa_get` suggests `fields`; lists suggest `offset`.
-- **Registry status.** A field is `verified` only once a live-test run has observed it in a real response. Entries from the spec or from the quirks above start `unverified`. Promote them from the live report (`registry.observed`), never by hand otherwise.
+- **Registry status.** A field is `verified` only once a live-test run has observed it in a real response. Entries from the spec or from the quirks above start `unverified`. Promote them from the live report (`registry.observed`) by adding them to `src/registry/observed.ts`, the only place that marks anything verified.
 
 ## Live tests
 

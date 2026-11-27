@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REGISTRY } from "../src/registry/index.js";
+import { LIVE_OBSERVED } from "../src/registry/observed.js";
 import { connect } from "./helpers/setup.js";
 
 describe("registry", () => {
@@ -25,14 +26,46 @@ describe("registry", () => {
     }
   });
 
-  it("nothing is marked verified before a live run has observed it", () => {
+  it("marks verified exactly the fields observed live, nothing else", () => {
     const verified = Object.values(REGISTRY).flatMap((t) =>
       Object.entries(t.fields)
         .filter(([, f]) => f.status === "verified")
         .map(([n]) => `${t.name}.${n}`),
     );
-    // Update this list only from a live-test report.
-    expect(verified).toEqual([]);
+    const observed = Object.entries(LIVE_OBSERVED).flatMap(([t, o]) =>
+      o.fields.map((f) => `${t}.${f}`),
+    );
+    expect(verified.sort()).toEqual(observed.sort());
+  });
+
+  it("keeps types never seen live entirely unverified", () => {
+    for (const name of ["subscribergroup", "timeline", "history"]) {
+      const t = REGISTRY[name]!;
+      expect(
+        Object.values(t.fields).every((f) => f.status === "unverified"),
+        name,
+      ).toBe(true);
+      expect(t.world?.status).toBe("unverified");
+      expect(t.parents.every((p) => p.status === "unverified")).toBe(true);
+    }
+    expect(REGISTRY.category!.parents.find((p) => p.field === "parent")?.status).toBe("unverified");
+  });
+
+  it("records the world links observed live at their granularity", () => {
+    expect(REGISTRY.article!.world).toMatchObject({ granularity: "1", status: "verified" });
+    expect(REGISTRY.category!.world).toMatchObject({ granularity: "2", status: "verified" });
+    expect(REGISTRY.secret!.world).toMatchObject({ granularity: "2", status: "verified" });
+    expect(REGISTRY.secret!.parents[0]).toMatchObject({
+      field: "article",
+      granularity: "2",
+      status: "verified",
+    });
+  });
+
+  it("only observes fields that exist in the registry", () => {
+    for (const [t, o] of Object.entries(LIVE_OBSERVED)) {
+      for (const f of o.fields) expect(REGISTRY[t]!.fields[f], `${t}.${f}`).toBeDefined();
+    }
   });
 
   it("wa_describe lists types and details one type and one template", async () => {

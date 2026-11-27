@@ -42,7 +42,9 @@ Read tools, compact output, untrusted marking, error scrubbing, access configura
 
 ## Delivery
 
-Offline tests for: defaults, explicit public only on request, unknown template fields rejected, ignored-field detection, conflict refusal, backup content and retention, restore, delete hidden and refused per level, child-element access. Live tests in the test world: create a `MCP-TEST-` person article with template fields and a link, update it, provoke a conflict (edit it in between), restore it; report results in the PR without real data. Update `CLAUDE.md` with any new quirk. Pull request to `main`.
+Offline tests for: defaults, explicit public only on request, unknown template fields rejected, ignored-field detection, conflict refusal, backup content and retention, restore, delete hidden and refused per level, child-element access. Live tests in the test world: create a `MCP-TEST-` person article with template fields and a link, update it, provoke a conflict (edit it in between), restore it; report results in the PR without real data.
+
+The stage A live run could not observe subscriber groups, timelines or history events (none in the test world), nor the category parent chain. Stage B's live test must also create `MCP-TEST-` elements of these three types, plus a `MCP-TEST-` child category, read them back at every granularity, and use the report to promote their observed fields to `verified` (including the history → timeline → world and category → parent chains). Update `CLAUDE.md` with any new quirk. Pull request to `main`.
 
 ## Review checklist (for the owner)
 
