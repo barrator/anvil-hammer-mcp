@@ -85,6 +85,10 @@ Live tests hit the real API, are run by hand and never in CI. They can only touc
 
 The run prints a summary and writes a report holding only structure (field names, counts, pass/fail), never titles, content or IDs, so it can be pasted into a pull request.
 
+## How this project is built
+
+Developed with AI assistance (Claude Code). Every plan and every change is reviewed by the maintainer, who is responsible for the code.
+
 ## Credits
 
 The design was informed by three MIT-licensed projects:

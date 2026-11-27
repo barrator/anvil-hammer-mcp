@@ -28,3 +28,4 @@ One line per decision: date, decision, reason. Newest at the bottom.
 | 2026-11-27 | The `success` flag is stripped from compact output and from the registry comparison | It is a response flag, not an element field |
 | 2026-11-27 | `WA_MAX_RESPONSE_CHARS` accepted by the owner | The architecture already makes the max size configurable |
 | 2026-11-27 | The cloud development environment may reach worldanvil.com to read the public spec, but never holds keys; live tests run only on the owner's VPS | Keys stay on infrastructure the owner controls |
+| 2026-11-27 | No AI attribution in commits or PRs (no co-author trailer, session link or footer); the owner is author and committer; AI assistance disclosed once in the README | The maintainer answers for every change; per-commit AI co-authorship is contested in open source, while a single disclosure stays honest |

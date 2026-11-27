@@ -10,6 +10,7 @@ This file is authoritative for every session. The overall design is in `docs/arc
 - Scope is strict: do only what the current stage brief asks. If something seems missing or wrong, ask; do not add it silently.
 - Every stage ends with green checks (`npm test`, `npm run typecheck`, `npm run lint`, `npm run build`), updates to this file and to `docs/decisions.md` when a rule or decision changes, and a pull request to `main`.
 - The owner works mostly from a phone. Keep PR descriptions short and scannable: what changed, how it was tested, what to look at.
+- **No AI attribution in history.** Commits and PRs carry no `Co-Authored-By` trailer for an AI, no session link and no "generated with" footer. Author and committer are the owner: `Frédéric Lauzier <74471835+barrator@users.noreply.github.com>`. The owner reviews and answers for every change. AI assistance is disclosed once, in the README.
 
 ## Language
 
