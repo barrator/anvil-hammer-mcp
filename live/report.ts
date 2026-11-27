@@ -4,6 +4,7 @@
  * and the report is meant to be pasted into a pull request).
  */
 import { writeFileSync } from "node:fs";
+import { RESPONSE_FLAGS } from "../src/output/compact.js";
 import { REGISTRY } from "../src/registry/index.js";
 
 export interface TypeObservation {
@@ -47,10 +48,11 @@ export class LiveReport {
     for (const [name, obs] of Object.entries(this.types)) {
       const def = REGISTRY[name];
       if (!def) continue;
-      const seen = new Set([
-        ...obs.listFields,
-        ...Object.values(obs.granularities).flatMap((g) => g.fields),
-      ]);
+      const seen = new Set(
+        [...obs.listFields, ...Object.values(obs.granularities).flatMap((g) => g.fields)].filter(
+          (f) => !RESPONSE_FLAGS.has(f),
+        ),
+      );
       const known = Object.keys(def.fields);
       out[name] = {
         observed: known.filter((f) => seen.has(f)).sort(),

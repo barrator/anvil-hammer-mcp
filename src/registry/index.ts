@@ -1,3 +1,4 @@
+import { LIVE_OBSERVED } from "./observed.js";
 import type { FieldDef, FieldKind, TypeDef } from "./types.js";
 
 /** Field taken from the official spec, not yet observed live. */
@@ -41,7 +42,7 @@ const COMMON: Record<string, FieldDef> = {
 const worldRef = (granularity: string) =>
   ({ field: "world", granularity, status: "unverified" }) as const;
 
-export const REGISTRY: Record<string, TypeDef> = {
+const BASE: Record<string, TypeDef> = {
   world: {
     name: "world",
     description: "A world: the top-level container for everything else.",
@@ -289,6 +290,40 @@ export const REGISTRY: Record<string, TypeDef> = {
     quirks: [],
   },
 };
+
+/**
+ * Apply live observations: observed fields and links become `verified`.
+ * A field listed as observed but missing from the registry is a mistake and fails loudly.
+ */
+function applyObservations(base: Record<string, TypeDef>): Record<string, TypeDef> {
+  const out: Record<string, TypeDef> = {};
+  for (const [name, def] of Object.entries(base)) {
+    const obs = LIVE_OBSERVED[name];
+    if (!obs) {
+      out[name] = def;
+      continue;
+    }
+    const fields: Record<string, FieldDef> = {};
+    for (const [f, d] of Object.entries(def.fields)) {
+      fields[f] = obs.fields.includes(f) ? { ...d, status: "verified" } : d;
+    }
+    for (const f of obs.fields) {
+      if (!(f in def.fields))
+        throw new Error(`Observed field ${name}.${f} is not in the registry.`);
+    }
+    out[name] = {
+      ...def,
+      fields,
+      world: def.world && obs.worldLink ? { ...def.world, status: "verified" } : def.world,
+      parents: def.parents.map((p) =>
+        obs.parentLinks?.includes(p.field) ? { ...p, status: "verified" } : p,
+      ),
+    };
+  }
+  return out;
+}
+
+export const REGISTRY: Record<string, TypeDef> = applyObservations(BASE);
 
 export const TYPE_NAMES = Object.keys(REGISTRY) as [string, ...string[]];
 

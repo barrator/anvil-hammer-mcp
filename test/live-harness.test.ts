@@ -93,3 +93,14 @@ describe("live-test config and ledger", () => {
     expect(new Ledger(join(dir, "ledger.json")).has("a-2")).toBe(true);
   });
 });
+
+describe("live report", () => {
+  it("ignores the success flag when comparing with the registry", async () => {
+    const { LiveReport } = await import("../live/report.js");
+    const r = new LiveReport();
+    r.type("secret").listFields = ["id", "title", "success", "seeded"];
+    const cmp = r.registryComparison().secret!;
+    expect(cmp.notInRegistry).toEqual(["seeded"]);
+    expect(cmp.observed).toEqual(["id", "title"]);
+  });
+});
