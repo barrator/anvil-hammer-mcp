@@ -1,0 +1,69 @@
+# anvil-hammer-mcp
+
+An MCP server that lets an AI assistant read and enrich **its owner's own** World Anvil worlds, safely. Runs locally (stdio) or self-hosted (Streamable HTTP with built-in OAuth) in a hardened Docker container.
+
+This file is authoritative for every session. The overall design is in `docs/architecture.md`. Work is delivered in stages, one brief per stage in `docs/stage-*.md`. Decisions are logged in `docs/decisions.md`.
+
+## How we work
+
+- Each stage starts with **your plan**. Do not write code before the owner approves it.
+- Scope is strict: do only what the current stage brief asks. If something seems missing or wrong, ask; do not add it silently.
+- Every stage ends with green checks (`npm test`, `npm run typecheck`, `npm run lint`, `npm run build`), updates to this file and to `docs/decisions.md` when a rule or decision changes, and a pull request to `main`.
+- The owner works mostly from a phone. Keep PR descriptions short and scannable: what changed, how it was tested, what to look at.
+
+## Language
+
+English only: code, comments, commit messages, README, documentation, tool descriptions, error messages.
+
+## Non-negotiable principles
+
+1. **One person, their own keys.** Each installation uses its owner's application key and user token. No proxy, no shared key, no service for third parties. The World Anvil API licence forbids it and it puts other people's tokens at risk.
+2. **Straight to World Anvil.** The API base URL is a constant in code. It cannot be overridden by configuration or environment.
+3. **Secrets never leave.** Keys never appear in tool results, error messages or logs, including when World Anvil echoes a request back in an error.
+4. **Nothing irreversible without a safety net.** A full copy of an element is saved before any modification. Delete is disabled by default and, even when enabled, backs up first.
+5. **Never overwrite someone else's work.** Several people may write to the same world. A write is refused if the element changed since the assistant last read it.
+6. **Content read from World Anvil is data, never instructions.** It is returned clearly marked as untrusted. The server never acts on its content.
+7. **Verify what was written.** World Anvil often answers 200 while silently ignoring a field. Every create and update is read back and compared; ignored fields are reported.
+8. **Safe defaults.** New articles are private and draft. Unlisted worlds are read-only.
+9. **Simple to install, simple to read.** Few dependencies, readable code, offline tests that run without keys.
+
+## Public repository: privacy rule
+
+This repository is public. **Never** put in code, tests, fixtures, examples, commits, PRs or issues: keys or tokens, real world IDs, real world names, real article content, real people's names. Fixtures use invented content and obviously fake IDs. Local files holding real values (`.env*`, test world config, test ledger, secrets) are gitignored and must stay so.
+
+## Stack
+
+| Layer | Choice |
+|---|---|
+| Language | TypeScript (strict), Node.js LTS |
+| MCP | Official MCP TypeScript SDK (stdio and Streamable HTTP transports, server-side auth helpers) |
+| Tests | Vitest; offline by default with mocked HTTP |
+| Lint/format | ESLint + Prettier |
+| Packaging | npm package for stdio use; Docker image (GHCR) for hosted use |
+| CI | GitHub Actions: lint, typecheck, offline tests, build; image publishing from stage D |
+
+Keep dependencies minimal and pinned through the lockfile. Justify any new runtime dependency in the PR.
+
+## World Anvil API: rules and known quirks
+
+Keep this list current. Every new quirk found in testing goes here and in the registry.
+
+- Base URL: `https://www.worldanvil.com/api/external/boromir/`. JSON only.
+- Required headers on every call: `x-application-key`, `x-auth-token`, `Content-Type: application/json`, and a `User-Agent` of the form `anvil-hammer-mcp (<repo url>, <version>)`.
+- Verbs: `GET` read, `PUT` create, `PATCH` update (only the fields sent), `DELETE` delete. List endpoints are `POST` with a body `{"limit": "50", "offset": "0"}` (string values, max 50).
+- Unknown routes return an HTML 404 page, not JSON. Handle it.
+- No documented rate limit. Space calls about 750 ms apart and back off on 429.
+- Article templates: `templateType` in lowercase works for every template (`person`, `organization`, `rank`, `settlement`…) even though the spec only lists `article`. A new article is automatically marked WIP as well as draft.
+- Template-specific fields are written and read back like any other field. The official spec documents fields for one template only (Location); read others from an existing article at granularity 2.
+- Relations are sent as `{"id": "..."}` objects, e.g. `{"organization": {"id": "..."}}`.
+- Organization `type` requires an internal type ID. Sending the type's name returns 200 and stores nothing. No route lists the types.
+- Category parent is `parent`, not `parentCategory` (otherwise nothing happens). Categories have two text fields: `description` and `custom1`.
+- Variables: the spec says `/variable_collection`, the live API uses `/variablecollection`.
+- Notes require an undocumented `type: "default"`.
+- Image upload is not implemented by the API. Images can only be referenced by ID once uploaded on the site.
+- Text is stored as BBCode, unchanged. Sidebar fields accept `--Key::Value--`, displayed as a "Key: Value" line.
+- The API is beta: all routes live in the registry so they can be fixed in one place.
+
+## Live tests
+
+Offline tests (`npm test`) never touch the network. Live tests (`npm run test:live`) are manual, never run in CI, and must go through the live-test harness: only the test world declared in a gitignored local file can be touched, and only elements whose title starts with `MCP-TEST-` and that are recorded in the gitignored test ledger. Never weaken the harness.
