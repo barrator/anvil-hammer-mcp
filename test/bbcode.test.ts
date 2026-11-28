@@ -88,6 +88,7 @@ const FIXTURES: Record<string, string> = {
   "ul with three levels and an empty item": "[ul]\n- a\n-- b\n--- c\n- \n[/ul]",
   "check list lines": "[p]Liste[/p]\n[] un[br]\n[] deux[br]\n[p]Fin[/p]",
   "sidebar line with a trailing blank between paragraphs": "[p]a[/p]\n--Clé::Valeur-- \n[p]b[/p]",
+  "sidebar lines with trailing tabs and spaces": "--A::1--\t\n--B::2--  \n[p]x[/p]\n--C::3-- ",
   "sidebar lines between paragraphs":
     "[p]Intro[/p]\n--Population::12--\n--Ruler::Invented--\n[p]Fin[/p]",
   "sidebar line inside a paragraph": "[p]--Population::12--[br]--Ruler::Invented--[/p]",
@@ -181,6 +182,9 @@ describe("BBCode → Markdown → BBCode is byte-identical", () => {
       `[h|${U}]`,
       "[p] [/p]",
       ".",
+      "--K::V-- ",
+      "--K::V--\t",
+      "\t",
     ];
     let seed = 42;
     const rand = () => {
@@ -255,6 +259,24 @@ describe("readable Markdown for the editor's forms", () => {
     expect(markdownToBbcode("- un\n  - deux\n- trois", "paragraph")).toBe(
       "[ul]\n- un\n-- deux\n- trois\n[/ul]",
     );
+  });
+
+  it("a sidebar line may end with spaces or tabs, kept byte for byte; no other variant counts", () => {
+    const bb = "[p]Famille[/p]\n--Blason::Gueules-- \n--Devise::Toujours--\t \n[p]Fin[/p]";
+    const v = bbcodeToMarkdown(bb);
+    expect(v.mode).toBe("paragraph");
+    expect(v.hasPlaceholders).toBe(false);
+    expect(v.markdown).toBe("Famille\n\n--Blason::Gueules-- \n\n--Devise::Toujours--\t \n\nFin");
+    expect(markdownToBbcode(v.markdown, v.layout)).toBe(bb);
+    expect(markdownToBbcode("--Blason::Gueules--  ", "paragraph")).toBe("--Blason::Gueules--  ");
+    for (const notOne of [
+      "-- Blason::Gueules--",
+      "--Blason::Gueules-- x",
+      " --Blason::Gueules--",
+      "--Blason: Gueules--",
+    ]) {
+      expect(bbcodeToMarkdown(`[p]a[/p]\n${notOne}`).placeholderShapes, notOne).toHaveLength(1);
+    }
   });
 
   it("a list sub-item is never taken for a sidebar line, and the reverse", () => {

@@ -82,7 +82,7 @@ export const KNOWN_TAGS = new Set([
 const TAG = /\[(\/?)([A-Za-z][A-Za-z0-9_-]{0,30})([:=|][^\]\n]{0,300})?(\s*\/)?\]/g;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MENTION = /@\[([^\]\n]{1,300})\](\(([^)\n]{0,300})\))?/g;
-const SIDEBAR = /^--[^\n]*?::[^\n]*?--$/gm;
+const SIDEBAR = /^--[^\s:-][^\n]*?::[^\n]*?--[ \t]*$/gm;
 
 type Counter = Record<string, number>;
 const inc = (c: Counter, k: string, n = 1) => {

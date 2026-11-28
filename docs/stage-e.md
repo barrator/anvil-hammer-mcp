@@ -51,3 +51,12 @@ Fields returned by World Anvil for timelines and history events but not in the r
 - Already added in stage B for `wa_upsert_timeline_event` (verified names, kinds not yet confirmed by a value): hour, minute, endingHour, endingMinute, location, species, report, militaryConflict.
 - Not to add: `isDraft` (timeline, history), and `state`/`isDraft`/`isWip` (subscriber group). The keys come back empty and are never stored.
 - Not observed yet: timeline `eras`; history `characters`, `organizations`.
+
+## Notes from stage C: forms kept as placeholders
+
+The converter keeps these as `⟦…⟧` placeholders (exact round trip, but not readable Markdown). Convert them later only if real use calls for it; each conversion needs the same byte-for-byte check and a probe run.
+
+- Inline: `[u]…[/u]`, `[color:#hex]…[/color]`, `[category:<id>]` / `[timeline:<id>]` openings and closings (the text between them is readable), unpaired or crossing `[b]`/`[i]`/`[s]`, uppercase tag spellings, tags with parameters other than heading ids.
+- Blocks (one placeholder per block): tables (`[table]…[/table]` on one line), `[center]…[/center]`, `[right]…[/right]`, `[aloud]…[/aloud]`, `[spoiler]…[/spoiler]`, `[secret:<id>]`, `[img:<id>|…]`, the generic heading `[h|<id>]…[/h]`, check lists (`[] text[br]` lines), multi-line or nested `[quote]`, several blocks on one line, lists in another layout, loose text lines outside blocks.
+- Paragraphs: empty `[p][/p]` (runs shown as `⟦[p][/p]×N⟧`) and whitespace-only `[p] [/p]`, on purpose.
+- Sidebar-like lines that are not the exact `--Key::Value--` form (trailing blanks are accepted).

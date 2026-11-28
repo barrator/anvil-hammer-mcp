@@ -82,10 +82,11 @@ const ESCAPABLE = new Set(["\\", "*", "~", PH_OPEN, PH_CLOSE, "#", "-", ".", ">"
 
 /**
  * A sidebar key-value line, displayed by World Anvil as "Key: Value". Only the
- * exact form counts: "--", a key, "::", a value, "--", alone on its line. A
- * list sub-item such as "-- name : value" is not one.
+ * exact form counts: "--", a key, "::", a value, "--", alone on its line, then
+ * optional spaces or tabs (the editor leaves a trailing space; they are kept
+ * byte for byte). A list sub-item such as "-- name : value" is not one.
  */
-export const SIDEBAR_LINE = /^--[^\s:-][^\n]*?::[^\n]*?--$/;
+export const SIDEBAR_LINE = /^--[^\s:-][^\n]*?::[^\n]*?--[ \t]*$/;
 
 const EMPTY_P = "[p][/p]";
 
