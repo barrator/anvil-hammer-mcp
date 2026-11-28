@@ -6,6 +6,7 @@
  */
 import { type Json, WorldAnvilApiError } from "../api/client.js";
 import type { AccessLevel } from "../config/access.js";
+import { RESPONSE_FLAGS } from "../output/compact.js";
 import { getType } from "../registry/index.js";
 import type { TypeDef } from "../registry/types.js";
 import { refId } from "../resolver.js";
@@ -21,6 +22,7 @@ import {
   outgoingLinks,
   referencesIn,
   restoreBody,
+  sameValue,
   validateFields,
 } from "./fields.js";
 
@@ -133,7 +135,12 @@ async function checkReferences(
   }
 }
 
-/** Refuse if the element changed since this session last read it (or since expected_update_date). */
+/**
+ * Refuse if the element changed since this session last read it (or since
+ * expected_update_date). Elements without an updateDate (seen live on
+ * subscriber groups) are compared by content instead: every field seen at the
+ * last read must still have the same value.
+ */
 function checkConflict(
   state: SessionState,
   type: string,
@@ -142,6 +149,29 @@ function checkConflict(
   expected?: string,
 ) {
   const now = normalizeUpdateDate(current.updateDate);
+  if (now === undefined) {
+    if (expected !== undefined) {
+      throw new ToolError(
+        `Refused: ${type} "${id}" has no updateDate, so expected_update_date cannot be checked. Read it again with wa_get, then retry without it.`,
+      );
+    }
+    const seen = state.lastContent(type, id);
+    if (!seen) {
+      throw new ToolError(
+        `Refused: ${type} "${id}" has not been read in this session. Read it first with wa_get, then retry.`,
+      );
+    }
+    const changed = Object.keys(seen).filter(
+      (k) => !RESPONSE_FLAGS.has(k) && k in current && !sameValue(seen[k], current[k]),
+    );
+    if (changed.length) {
+      throw new ToolError(
+        `Refused: ${type} "${id}" was changed by someone else since you last read it (changed: ${changed.join(", ")}). ` +
+          "Read it again with wa_get, check the changes, then retry.",
+      );
+    }
+    return;
+  }
   const reference =
     expected !== undefined
       ? normalizeUpdateDate(expected)
@@ -151,7 +181,7 @@ function checkConflict(
       `Refused: ${type} "${id}" has not been read in this session. Read it first with wa_get, then retry.`,
     );
   }
-  if (now !== undefined && now !== reference) {
+  if (now !== reference) {
     throw new ToolError(
       `Refused: ${type} "${id}" was changed by someone else since you last read it ` +
         `(last read: ${reference}; now: ${now}). Read it again with wa_get, check the changes, then retry.`,
@@ -189,7 +219,7 @@ async function readBack(
     id,
     granularity: def.backupGranularity,
   });
-  state.rememberUpdateDate(def.name, id, after.updateDate);
+  state.rememberRead(def.name, id, after);
   state.worlds.set(`${def.name}:${id}`, worldId);
   return after;
 }
@@ -439,6 +469,8 @@ export async function restoreElement(
     dryRun: boolean;
     scanLinks: boolean;
     expectedUpdateDate?: string;
+    /** Explicit request to make the element public again when the backup was public. */
+    restorePublic?: boolean;
   },
 ): Promise<WriteOutcome> {
   const def = getType(input.type);
@@ -455,9 +487,29 @@ export async function restoreElement(
   }
   assertCanWrite(ctx, backup.worldId, def.name, input.id, "write");
 
+  const notes: string[] = [];
+  /** Nothing becomes public through a restore unless the call asks for it explicitly. */
+  const keepPrivate = (body: Json, publicNow: boolean) => {
+    if (body.state === "public" && !publicNow && !input.restorePublic) {
+      body.state = "private";
+      notes.push(
+        "The backup was public; it was restored as PRIVATE. Pass restore_public: true only if the user asks to make it public again.",
+      );
+    }
+  };
+  const noteImages = (images: string[]) => {
+    if (images.length) {
+      notes.push(
+        `Image references are not restored (they cannot be checked yet): ${images.join(", ")}.`,
+      );
+    }
+  };
+
   const current = await readCurrent(ctx, def, input.id);
   if (current) {
-    const { body, skipped } = restoreBody(def, backup.element, current);
+    const { body, skipped, images } = restoreBody(def, backup.element, current);
+    keepPrivate(body, current.state === "public");
+    noteImages(images);
     if (Object.keys(body).length === 0) {
       throw new ToolError(
         `Nothing to restore: ${def.name} "${input.id}" already matches backup "${input.backupId}".`,
@@ -472,16 +524,21 @@ export async function restoreElement(
       expectedUpdateDate: input.expectedUpdateDate,
       reason: "restore",
     });
-    if (skipped.length)
+    out.warnings.push(...notes);
+    if (skipped.length) {
       out.warnings.push(`Not restored (unknown to the registry): ${skipped.join(", ")}.`);
+    }
     return { ...out, extra: { restoredFrom: input.backupId } };
   }
 
   // The element no longer exists: recreate it. World Anvil gives it a new ID.
-  const { body, skipped } = restoreBody(def, backup.element, undefined);
+  const { body, skipped, images } = restoreBody(def, backup.element, undefined);
+  keepPrivate(body, false);
+  noteImages(images);
   body.world = { id: backup.worldId };
-  if (def.name === "article" && typeof backup.element.templateType === "string")
+  if (def.name === "article" && typeof backup.element.templateType === "string") {
     body.templateType = backup.element.templateType;
+  }
   const out = await createElement(ctx, state, {
     type: def.name,
     body,
@@ -489,10 +546,10 @@ export async function restoreElement(
     dryRun: input.dryRun,
     noDefaults: true,
   });
-  if (body.state === "public")
-    out.warnings.push("The backup was public, so the recreated element is public too.");
-  if (skipped.length)
+  out.warnings.push(...notes);
+  if (skipped.length) {
     out.warnings.push(`Not restored (unknown to the registry): ${skipped.join(", ")}.`);
+  }
 
   const extra: Json = {
     restoredFrom: input.backupId,

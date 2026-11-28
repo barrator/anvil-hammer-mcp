@@ -37,7 +37,7 @@ function rememberAll(state: SessionState, type: string, items: Json[], worldId?:
   for (const it of items) {
     const id = typeof it.id === "string" ? it.id : undefined;
     if (!id) continue;
-    state.rememberUpdateDate(type, id, it.updateDate);
+    state.rememberRead(type, id, it);
     if (worldId) state.worlds.set(`${type}:${id}`, worldId);
   }
 }
@@ -211,7 +211,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
         assertWorldReadable(ctx, world, type, id);
       }
 
-      state.rememberUpdateDate(type, id, element.updateDate);
+      state.rememberRead(type, id, element);
       return renderElement(
         ctx,
         `${type} "${id}", granularity ${g}.`,

@@ -23,8 +23,13 @@ export interface SeenUpdate {
 }
 
 export class SessionState {
-  /** `${type}:${id}` → last updateDate seen by this session (used by stage B). */
+  /** `${type}:${id}` → last updateDate seen by this session. */
   readonly updateDates = new Map<string, SeenUpdate>();
+  /**
+   * `${type}:${id}` → content last seen, for elements that come back without
+   * an updateDate (conflict detection then compares content instead).
+   */
+  readonly contents = new Map<string, Record<string, unknown>>();
   /** `${type}:${id}` → world id it belongs to. */
   readonly worlds = new Map<string, string>();
 
@@ -34,13 +39,30 @@ export class SessionState {
     this.updateDates.set(`${type}:${id}`, { updateDate: normalized, readAt: now });
   }
 
+  /** Remember what a read returned: its updateDate, or its content when it has none. */
+  rememberRead(type: string, id: string, element: Record<string, unknown>, now = Date.now()): void {
+    const key = `${type}:${id}`;
+    if (normalizeUpdateDate(element.updateDate) !== undefined) {
+      this.rememberUpdateDate(type, id, element.updateDate, now);
+      this.contents.delete(key);
+    } else {
+      this.updateDates.delete(key);
+      this.contents.set(key, element);
+    }
+  }
+
   lastUpdateDate(type: string, id: string): SeenUpdate | undefined {
     return this.updateDates.get(`${type}:${id}`);
+  }
+
+  lastContent(type: string, id: string): Record<string, unknown> | undefined {
+    return this.contents.get(`${type}:${id}`);
   }
 
   /** Forget an element (after it was deleted). */
   forget(type: string, id: string): void {
     this.updateDates.delete(`${type}:${id}`);
+    this.contents.delete(`${type}:${id}`);
     this.worlds.delete(`${type}:${id}`);
   }
 }

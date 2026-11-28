@@ -93,10 +93,21 @@ async function rawGet(type: string, id: string, granularity: string): Promise<Js
 async function checkPrivateDraft(type: string, id: string) {
   const def = REGISTRY[type]!;
   const el = await rawGet(type, id, def.backupGranularity);
-  const privateOk = el.state === "private";
-  const draftOk = !("isDraft" in def.fields) || el.isDraft === true || el.isDraft === 1;
+  if (el.updateDate === undefined || el.updateDate === null) {
+    const list = (report.quirks.typesWithoutUpdateDate ??= []) as string[];
+    if (!list.includes(type)) list.push(type);
+  }
+  const hasState = "state" in def.fields;
+  const hasDraft = "isDraft" in def.fields;
+  if (!hasState && !hasDraft) {
+    report.check(`${type}: has no visibility fields (state/isDraft), nothing to check`, true);
+    return;
+  }
+  const privateOk = !hasState || el.state === "private";
+  const draftOk = !hasDraft || el.isDraft === true || el.isDraft === 1;
+  const what = [hasState && "private", hasDraft && "draft"].filter(Boolean).join(" and ");
   report.check(
-    `${type}: created private${"isDraft" in def.fields ? " and draft" : ""}`,
+    `${type}: created ${what}`,
     privateOk && draftOk,
     privateOk && draftOk ? undefined : `state ${String(el.state)}, isDraft ${String(el.isDraft)}`,
   );
@@ -136,6 +147,7 @@ async function create(type: string, tool: string, args: Record<string, unknown>)
   );
   expect(r.isError, r.text).toBe(false);
   const id = createdId(r.text);
+  report.hide(id);
   created.push({ type, id });
   await checkPrivateDraft(type, id);
   return { id, text: r.text };
@@ -148,6 +160,7 @@ beforeAll(async () => {
   secrets = loadSecrets(process.env);
   const live = loadLiveConfig();
   testWorldId = live.testWorldId;
+  report.hide(testWorldId);
   ledger = new Ledger(live.ledgerFile);
   guard = createGuardedFetch(fetch, { testWorldId, ledger, readOnly: false });
   raw = new WorldAnvilClient(secrets, { fetch: guard.fetch });
@@ -159,6 +172,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!guard) return; // setup failed: the error above says why
   // Delete everything this run created, children first, through the server (backup first).
+  report.hide(testWorldId, ...created.map((c) => c.id));
   let deleted = 0;
   for (const el of [...created].reverse()) {
     await alice("wa_get", { type: el.type, id: el.id }).catch(() => undefined);
@@ -166,7 +180,9 @@ afterAll(async () => {
       isError: true,
       text: e.message,
     }));
-    if (!r.isError && /-delete\.json/.test(r.text)) deleted++;
+    const ok = !r.isError && /-delete\.json/.test(r.text);
+    if (ok) deleted++;
+    else report.check(`cleanup: delete ${el.type}`, false, r.text); // the reason, IDs masked
   }
   report.check(
     "cleanup: every created element deleted, each backed up first",
@@ -189,6 +205,7 @@ afterAll(async () => {
   rmSync(backupDir, { recursive: true, force: true });
   report.write(REPORT_FILE);
   console.log(`\n${report.summary()}\n\nFull report: ${REPORT_FILE}`);
+  report.assertAllPassed();
 });
 
 describe("live write: articles", () => {

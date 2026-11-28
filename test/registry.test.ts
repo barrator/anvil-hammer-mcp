@@ -38,17 +38,37 @@ describe("registry", () => {
     expect(verified.sort()).toEqual(observed.sort());
   });
 
-  it("keeps types never seen live entirely unverified", () => {
+  it("keeps fields of types whose field names were never reported entirely unverified", () => {
     for (const name of ["subscribergroup", "timeline", "history"]) {
       const t = REGISTRY[name]!;
       expect(
         Object.values(t.fields).every((f) => f.status === "unverified"),
         name,
       ).toBe(true);
-      expect(t.world?.status).toBe("unverified");
-      expect(t.parents.every((p) => p.status === "unverified")).toBe(true);
     }
-    expect(REGISTRY.category!.parents.find((p) => p.field === "parent")?.status).toBe("unverified");
+  });
+
+  it("records the links observed in the stage B write run", () => {
+    for (const name of ["subscribergroup", "timeline", "history"]) {
+      expect(REGISTRY[name]!.world, name).toMatchObject({ granularity: "1", status: "verified" });
+    }
+    expect(REGISTRY.history!.parents[0]).toMatchObject({
+      field: "timelines",
+      granularity: "2",
+      status: "verified",
+    });
+    expect(REGISTRY.category!.parents[0]).toMatchObject({
+      field: "parent",
+      granularity: "2",
+      status: "verified",
+    });
+  });
+
+  it("has no draft or visibility fields where World Anvil has none", () => {
+    for (const name of ["timeline", "history", "category"])
+      expect(REGISTRY[name]!.fields, name).not.toHaveProperty("isDraft");
+    expect(REGISTRY.subscribergroup!.fields).not.toHaveProperty("state");
+    expect(REGISTRY.subscribergroup!.fields).not.toHaveProperty("isDraft");
   });
 
   it("marks every probed template field verified, with kinds confirmed only where a value was seen", () => {

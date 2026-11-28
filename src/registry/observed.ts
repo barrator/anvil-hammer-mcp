@@ -6,8 +6,11 @@
  * Run of 2026-11-27 (stage A, PR #1), read-only, test world only.
  * Template probe of 2026-11-28 (stage B), read-only: person, organization,
  * settlement and rank fields (names, and JSON kinds where a value existed).
- * Not observed: subscribergroup, timeline, history (none in the test world);
- * article.histories, article.secrets, world.genres; the category parent chain.
+ * Not observed in stage A: subscribergroup, timeline, history (none in the
+ * test world); article.histories, article.secrets, world.genres.
+ * Stage B write run (2026-11-28): world links of subscribergroup, timeline and
+ * history (granularity 1), history.timelines and category.parent (granularity 2).
+ * Their field names were not listed in that report, so their fields stay unverified.
  */
 /** JSON kind of a value seen live (from the template probe). */
 export type ObservedKind = "string" | "ref" | "array" | "object";
@@ -377,7 +380,6 @@ export const LIVE_OBSERVED: Record<string, Observation> = {
       "id",
       "isBook",
       "isCollapsed",
-      "isDraft",
       "isEditable",
       "isWip",
       "parent",
@@ -391,7 +393,10 @@ export const LIVE_OBSERVED: Record<string, Observation> = {
       "url",
       "world",
     ],
-    worldLink: true, // from granularity 2; parent chain not exercised (top-level categories only)
+    worldLink: true, // from granularity 2
+    // Stage B write run: a child category returned its parent at granularity 2.
+    parentLinks: ["parent"],
+    // isDraft: the key was returned in stage A but categories have no draft state (stage B run); removed from the registry.
   },
   secret: {
     fields: [
@@ -418,6 +423,20 @@ export const LIVE_OBSERVED: Record<string, Observation> = {
     ],
     worldLink: true, // from granularity 2
     parentLinks: ["article"], // from granularity 2
+  },
+  // Stage B write run (2026-11-28): MCP-TEST- elements created and read back at every granularity.
+  subscribergroup: {
+    fields: [],
+    worldLink: true, // from granularity 1
+  },
+  timeline: {
+    fields: [],
+    worldLink: true, // from granularity 1
+  },
+  history: {
+    fields: [],
+    worldLink: true, // from granularity 1
+    parentLinks: ["timelines"], // from granularity 2
   },
   world: {
     fields: [

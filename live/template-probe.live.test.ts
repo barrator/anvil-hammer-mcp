@@ -78,6 +78,8 @@ describe("template probe", () => {
     }
     console.log(`\n${lines.join("\n")}\nFull report: ${REPORT_FILE}`);
 
+    // Any harness refusal fails the run.
+    if (guard.refused.length) throw new Error(`Harness refused ${guard.refused.length} call(s).`);
     expect(guard.refused).toEqual([]);
     expect(bodies.length).toBeGreaterThan(0);
   });

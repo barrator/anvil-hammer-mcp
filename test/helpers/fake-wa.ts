@@ -227,6 +227,8 @@ export interface FakeOptions {
   minGranularity?: Record<string, number>;
   /** Fields World Anvil accepts with 200 but does not store. Default: organization type given as a name. */
   ignore?: (type: string, field: string, value: unknown) => boolean;
+  /** Types whose elements come back without updateDate (seen live on subscriber groups). */
+  noUpdateDate?: string[];
 }
 
 /** Mimics World Anvil ignoring an organization type sent by name instead of {id}. */
@@ -259,6 +261,7 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
   let created = 0;
   let clock = 0;
   const stamp = () => date(`2026-09-${String(1 + (clock++ % 28)).padStart(2, "0")}`);
+  const noDate = new Set(options.noUpdateDate ?? []);
 
   const shape = (el: Json, granularity: number): Json => {
     const out: Json = {};
@@ -395,7 +398,9 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
       if (!coll) return htmlNotFound();
       const el = coll.find((e) => e.id === call.query.id);
       if (!el) return json({ success: false, error: "resource_not_found" }, 404);
-      return json(shape(el, Number(call.query.granularity ?? "0")));
+      const out = shape(el, Number(call.query.granularity ?? "0"));
+      if (noDate.has(path)) delete out.updateDate;
+      return json(out);
     }
     return htmlNotFound();
   }) as typeof fetch;

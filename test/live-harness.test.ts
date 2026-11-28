@@ -191,3 +191,30 @@ describe("live-test harness guard, write mode", () => {
     ).rejects.toThrow(/not in the ledger/);
   });
 });
+
+describe("live report checks", () => {
+  it("fails the run when any check failed, including late ones", async () => {
+    const { LiveReport } = await import("../live/report.js");
+    const r = new LiveReport();
+    r.check("fine", true);
+    expect(() => r.assertAllPassed()).not.toThrow();
+    r.check("cleanup: delete subscribergroup", false, "Refused");
+    expect(() => r.assertAllPassed()).toThrow(
+      /1 live check\(s\) failed: cleanup: delete subscribergroup/,
+    );
+  });
+
+  it("masks IDs and UUIDs in check details", async () => {
+    const { LiveReport } = await import("../live/report.js");
+    const r = new LiveReport();
+    r.hide("created-article-0001");
+    r.check(
+      "x",
+      false,
+      'Refused: subscribergroup "0a1b2c3d-1111-2222-3333-444455556666" and article "created-article-0001" were read',
+    );
+    const detail = r.checks[0]!.detail!;
+    expect(detail).not.toMatch(/0a1b2c3d|created-article-0001/);
+    expect(detail.match(/<id>/g)).toHaveLength(2);
+  });
+});

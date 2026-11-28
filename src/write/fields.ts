@@ -157,8 +157,22 @@ export function applyCreateDefaults(def: TypeDef, body: Json): { body: Json; app
 
 // ---------- Read-back comparison ----------
 
+/**
+ * World Anvil returns `{"id": -1}` for an unset reference (seen live on
+ * `cover`). It is a placeholder, not a link: treat it as empty.
+ */
+export function isPlaceholderRef(v: unknown): boolean {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const id = (v as Json).id;
+  return id === -1 || id === "-1";
+}
+
 const isEmpty = (v: unknown) =>
-  v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
+  v === undefined ||
+  v === null ||
+  v === "" ||
+  (Array.isArray(v) && v.length === 0) ||
+  isPlaceholderRef(v);
 
 /**
  * Comparable form of a value: references → sorted ids, World Anvil dates →
@@ -248,12 +262,18 @@ export function restoreBody(
   def: TypeDef,
   backup: Json,
   current: Json | undefined,
-): { body: Json; skipped: string[] } {
+): { body: Json; skipped: string[]; images: string[] } {
   const template = typeof backup.templateType === "string" ? backup.templateType : undefined;
   const known = knownFields(def, template);
   const body: Json = {};
+  const images: string[] = [];
   for (const [k, f] of Object.entries(known)) {
     if (f.writable === false || f.kind === "date" || k === "world") continue;
+    if (f.refType === "image") {
+      // Image references cannot be checked against the world yet: never sent by a restore.
+      if (!isEmpty(backup[k]) && !sameValue(backup[k], current?.[k])) images.push(k);
+      continue;
+    }
     const b = backup[k];
     const c = current?.[k];
     let value: unknown;
@@ -268,7 +288,7 @@ export function restoreBody(
     body[k] = value;
   }
   const skipped = Object.keys(backup).filter((k) => !(k in known) && k !== "success");
-  return { body, skipped };
+  return { body, skipped, images };
 }
 
 /** Outgoing links of an element (fields holding references), for restore reports. */

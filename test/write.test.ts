@@ -56,9 +56,15 @@ describe("safe defaults", () => {
       type: "subscribergroup",
       data: { title: "Players", world: { id: EDIT_WORLD } },
     });
-    const body = lastPut(fake.calls);
-    expect(body.state).toBe("private");
-    expect(body).not.toHaveProperty("isDraft");
+    const sg = lastPut(fake.calls);
+    expect(sg).not.toHaveProperty("state");
+    expect(sg).not.toHaveProperty("isDraft");
+    for (const type of ["timeline", "history", "category"]) {
+      await call("wa_create", { type, data: { title: `A ${type}`, world: { id: EDIT_WORLD } } });
+      const body = lastPut(fake.calls);
+      expect(body.state, type).toBe("private");
+      expect(body, type).not.toHaveProperty("isDraft");
+    }
   });
 
   it("an update never touches state unless asked", async () => {
@@ -526,5 +532,123 @@ describe("access levels for writes", () => {
     });
     expect(r.isError, r.text).toBe(false);
     expect(lastPut(fake.calls)).toMatchObject({ world: { id: EDIT_WORLD } });
+  });
+});
+
+describe("elements without updateDate", () => {
+  const opts = { fake: { noUpdateDate: ["subscribergroup"] }, config: { enableDelete: true } };
+
+  async function withGroup() {
+    const c = await connect({ ...opts, config: { ...opts.config } });
+    const r = await c.call("wa_create", {
+      type: "subscribergroup",
+      data: { title: "Players", world: { id: FULL_WORLD } },
+    });
+    const id = /source="subscribergroup:([^"]+)"/.exec(r.text)![1]!;
+    return { ...c, id };
+  }
+
+  it("can be updated and deleted after a read: conflict check compares content", async () => {
+    const { call, id } = await withGroup();
+    await call("wa_get", { type: "subscribergroup", id });
+    const u = await call("wa_update", {
+      type: "subscribergroup",
+      id,
+      data: { description: "Invented." },
+    });
+    expect(u.isError, u.text).toBe(false);
+    const d = await call("wa_delete", { type: "subscribergroup", id });
+    expect(d.isError, d.text).toBe(false);
+  });
+
+  it("refuses when the content changed since the read", async () => {
+    const { call, fake, id } = await withGroup();
+    await call("wa_get", { type: "subscribergroup", id });
+    fake.data.subscribergroups.find((g) => g.id === id)!.title = "Renamed by someone else";
+    const r = await call("wa_update", { type: "subscribergroup", id, data: { description: "x" } });
+    expect(r.text).toMatch(/changed by someone else since you last read it \(changed: title\)/);
+  });
+
+  it("refuses expected_update_date, which cannot be checked", async () => {
+    const { call, id } = await withGroup();
+    const r = await call("wa_update", {
+      type: "subscribergroup",
+      id,
+      data: { description: "x" },
+      expected_update_date: "2026-01-01",
+    });
+    expect(r.text).toMatch(/has no updateDate/);
+  });
+});
+
+describe("restore details", () => {
+  it("never sends a placeholder {id: -1} or an image reference", async () => {
+    const data = seedData();
+    const el = data.articles.find((a) => a.id === "article-edit-0001")!;
+    el.cover = { id: -1 };
+    el.portrait = { id: "image-fake-0001", url: "https://fake.invalid/i.png" };
+    const { call, fake } = await connect({ data });
+    await call("wa_get", { type: "article", id: "article-edit-0001" });
+    await call("wa_update_article", { id: "article-edit-0001", fields: { content: "Changed." } });
+    el.portrait = { id: "image-fake-0002" }; // changed on the site meanwhile (no updateDate bump needed for the test)
+    const list = await call("wa_restore", { type: "article", id: "article-edit-0001" });
+    const backupId = /"backup_id": "([^"]+)"/.exec(list.text)![1]!;
+    await call("wa_get", { type: "article", id: "article-edit-0001" });
+    const r = await call("wa_restore", {
+      type: "article",
+      id: "article-edit-0001",
+      backup_id: backupId,
+    });
+    const patch = fake.calls.filter((c) => c.method === "PATCH").at(-1)!.body!;
+    expect(patch).not.toHaveProperty("cover");
+    expect(patch).not.toHaveProperty("portrait");
+    expect(r.text).not.toMatch(/did NOT store: .*cover/);
+    expect(r.text).toMatch(/Image references are not restored.*portrait/);
+  });
+
+  it("restores a public element as private unless restore_public is given", async () => {
+    const data = seedData();
+    data.articles.find((a) => a.id === "article-full-0001")!.state = "public";
+    const { call, fake } = await connect({ data, config: { enableDelete: true } });
+    await call("wa_get", { type: "article", id: "article-full-0001" });
+    await call("wa_delete", { type: "article", id: "article-full-0001" });
+    const list = await call("wa_restore", { type: "article", id: "article-full-0001" });
+    const backupId = /"backup_id": "([^"]+)"/.exec(list.text)![1]!;
+
+    const dry = await call("wa_restore", {
+      type: "article",
+      id: "article-full-0001",
+      backup_id: backupId,
+      dry_run: true,
+    });
+    expect(dry.text).toContain('"state": "private"');
+    expect(dry.text).toMatch(/restored as PRIVATE/);
+
+    const pub = await call("wa_restore", {
+      type: "article",
+      id: "article-full-0001",
+      backup_id: backupId,
+      restore_public: true,
+    });
+    expect(pub.isError, pub.text).toBe(false);
+    expect(lastPut(fake.calls)).toMatchObject({ state: "public" });
+  });
+
+  it("does not make an existing element public again without restore_public", async () => {
+    const data = seedData();
+    const el = data.articles.find((a) => a.id === "article-edit-0001")!;
+    el.state = "public";
+    const { call, fake } = await connect({ data });
+    await call("wa_get", { type: "article", id: "article-edit-0001" });
+    await call("wa_update_article", { id: "article-edit-0001", state: "private" });
+    const list = await call("wa_restore", { type: "article", id: "article-edit-0001" });
+    const backupId = /"backup_id": "([^"]+)"/.exec(list.text)![1]!;
+    const r = await call("wa_restore", {
+      type: "article",
+      id: "article-edit-0001",
+      backup_id: backupId,
+    });
+    expect(r.text).toMatch(/restored as PRIVATE/);
+    expect(fake.data.articles.find((a) => a.id === "article-edit-0001")!.state).toBe("private");
   });
 });

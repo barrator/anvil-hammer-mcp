@@ -40,12 +40,9 @@ const COMMON: Record<string, FieldDef> = {
   isEditable: spec("boolean", { writable: false }),
 };
 
-/** Subscriber groups have no isWip/isDraft in the spec. */
-const withoutDraft = (fields: Record<string, FieldDef>): Record<string, FieldDef> => {
-  return Object.fromEntries(
-    Object.entries(fields).filter(([k]) => k !== "isWip" && k !== "isDraft"),
-  );
-};
+/** Common fields minus some that a type does not really have (observed live). */
+const without = (fields: Record<string, FieldDef>, ...names: string[]): Record<string, FieldDef> =>
+  Object.fromEntries(Object.entries(fields).filter(([k]) => !names.includes(k)));
 
 const worldRef = (granularity: string) =>
   ({ field: "world", granularity, status: "unverified" }) as const;
@@ -167,7 +164,7 @@ const BASE: Record<string, TypeDef> = {
     world: worldRef("2"),
     parents: [{ field: "parent", type: "category", granularity: "2", status: "unverified" }],
     fields: {
-      ...COMMON,
+      ...without(COMMON, "isDraft"),
       title: spec("string", { requiredOnCreate: true }),
       world: spec("ref", { refType: "world", requiredOnCreate: true }),
       description: notes("string", "One of the two category text fields.", { bbcode: true }),
@@ -222,7 +219,7 @@ const BASE: Record<string, TypeDef> = {
     world: worldRef("1"),
     parents: [],
     fields: {
-      ...withoutDraft(COMMON),
+      ...without(COMMON, "isWip", "isDraft", "state"),
       title: spec("string", { requiredOnCreate: true }),
       world: spec("ref", { refType: "world", requiredOnCreate: true }),
       description: bb(),
@@ -246,7 +243,7 @@ const BASE: Record<string, TypeDef> = {
     world: worldRef("1"),
     parents: [],
     fields: {
-      ...COMMON,
+      ...without(COMMON, "isDraft"),
       title: spec("string", { requiredOnCreate: true }),
       world: spec("ref", { refType: "world", requiredOnCreate: true }),
       description: bb(),
@@ -271,7 +268,7 @@ const BASE: Record<string, TypeDef> = {
     world: worldRef("1"),
     parents: [{ field: "timelines", type: "timeline", granularity: "2", status: "unverified" }],
     fields: {
-      ...COMMON,
+      ...without(COMMON, "isDraft"),
       title: spec("string"),
       world: spec("ref", { refType: "world" }),
       content: bb(),

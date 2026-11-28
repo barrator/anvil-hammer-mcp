@@ -68,6 +68,7 @@ beforeAll(() => {
   secrets = loadSecrets(process.env);
   const live = loadLiveConfig();
   testWorldId = live.testWorldId;
+  report.hide(testWorldId);
   guard = createGuardedFetch(fetch, {
     testWorldId,
     ledger: new Ledger(live.ledgerFile),
@@ -78,6 +79,7 @@ beforeAll(() => {
 
 afterAll(() => {
   if (!guard) return; // setup failed: the error above says why
+  report.hide(testWorldId, ...Object.values(sampleIds).flat());
   report.check(
     "harness refused no call",
     guard.refused.length === 0,
@@ -85,6 +87,7 @@ afterAll(() => {
   );
   report.write(REPORT_FILE);
   console.log(`\n${report.summary()}\n\nFull report: ${REPORT_FILE}`);
+  report.assertAllPassed();
 });
 
 describe("live read: raw API observations", () => {

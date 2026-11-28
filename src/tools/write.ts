@@ -266,13 +266,20 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       description:
         "Without backup_id: list an element's backups. With backup_id: put the element back exactly as it was " +
         "(a write: conflict-checked, backed up first, read back). If the element was deleted it is recreated with a " +
-        "NEW ID; links to the old ID break. scan_links: true also searches the world's articles for the old ID " +
+        "NEW ID; links to the old ID break. A public backup is restored as private unless restore_public: true. " +
+        "scan_links: true also searches the world's articles for the old ID " +
         "(slow: up to 100 articles, about 1.5 minutes).",
       inputSchema: {
         type: z.enum(writableTypes),
         id: id("element"),
         backup_id: z.string().trim().min(1).optional(),
         scan_links: z.boolean().default(false),
+        restore_public: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Only if the user explicitly asks: make the element public again when the backup was public.",
+          ),
         expected_update_date: expected,
         dry_run: dryRun,
       },
@@ -280,7 +287,10 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
     },
     handler(
       ctx,
-      async ({ type, id, backup_id, scan_links, expected_update_date, dry_run }, state) => {
+      async (
+        { type, id, backup_id, scan_links, restore_public, expected_update_date, dry_run },
+        state,
+      ) => {
         if (!backup_id) {
           const list = listBackups(ctx, type, id).map((b) => ({
             backup_id: b.backupId,
@@ -307,6 +317,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
             backupId: backup_id,
             dryRun: dry_run,
             scanLinks: scan_links,
+            restorePublic: restore_public,
             expectedUpdateDate: expected_update_date,
           }),
         );
