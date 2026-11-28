@@ -54,11 +54,26 @@ export interface MarkdownView {
   hasPlaceholders: boolean;
   /** Raw BBCode held by each placeholder (for local diagnostics only; may hold user text). */
   placeholderRaws: string[];
+  /** Why each placeholder was needed, as a rule name (no content), parallel to placeholderRaws. */
+  placeholderShapes: string[];
   /** True when the whole field could only be shown raw. */
   rawFallback: boolean;
   /** Set when the field is in plain mode: why paragraph mode was not possible. */
   fallbackReason?: FallbackReason;
+  /** The shape of the line that blocked paragraph mode, as a rule name (no content). */
+  fallbackDetail?: string;
 }
+
+/** Placeholders made while converting, with the rule that required each. */
+interface Collector {
+  raws: string[];
+  shapes: string[];
+}
+const collector = (): Collector => ({ raws: [], shapes: [] });
+const absorb = (into: Collector, from: Collector) => {
+  into.raws.push(...from.raws);
+  into.shapes.push(...from.shapes);
+};
 
 export const PH_OPEN = "⟦";
 export const PH_CLOSE = "⟧";
@@ -88,8 +103,9 @@ export const SIDEBAR_LINE = /^--[^\s:-][^\n]*?::[^\n]*?--$/;
 // ---------------------------------------------------------------------------
 // Placeholders
 
-function placeholder(raw: string, raws: string[]): string {
-  raws.push(raw);
+function placeholder(raw: string, c: Collector, shape: string): string {
+  c.raws.push(raw);
+  c.shapes.push(shape);
   return PH_OPEN + raw.replace(/[\\⟧]/g, (c) => "\\" + c) + PH_CLOSE;
 }
 
@@ -215,7 +231,18 @@ const ATTEMPTS: Omit<InlineOptions, "mode">[] = [
   { escapeLevel: 1, brPlaceholder: true, noEmphasis: true },
 ];
 
-function inlineToMarkdown(bb: string, o: InlineOptions, raws: string[]): string {
+/** Shape of an inline tag kept as a placeholder. */
+function inlineShape(tag: string, o: InlineOptions): string {
+  if (o.mode === "plain") return "tag in a plain-mode field";
+  if (EMPHASIS[tag]) return "unpaired or crossing [b]/[i]";
+  if (tag === "[br]") return "[br] kept as placeholder";
+  return "inline tag without a Markdown form";
+}
+
+/** Marks an empty line inside a paragraph (e.g. "[br][br]", or a [br] at its start or end). */
+const EMPTY_LINE_MARK = "\\";
+
+function inlineToMarkdown(bb: string, o: InlineOptions, c: Collector): string {
   const tokens = tokenizeBbcode(bb);
   const matched = o.noEmphasis ? new Set<number>() : matchedEmphasis(tokens);
   let md = "";
@@ -224,8 +251,16 @@ function inlineToMarkdown(bb: string, o: InlineOptions, raws: string[]): string 
     else if (t.kind === "mention") md += t.value;
     else if (matched.has(i)) md += EMPHASIS[t.value]?.md ?? t.value;
     else if (o.mode === "paragraph" && t.value === "[br]" && !o.brPlaceholder) md += "\n";
-    else md += placeholder(t.value, raws);
+    else md += placeholder(t.value, c, inlineShape(t.value, o));
   });
+  // Inside a paragraph, an empty line (from adjacent [br], or a [br] at either end)
+  // is written as a line holding only "\", so it cannot be read as a paragraph break.
+  if (o.mode === "paragraph" && md.includes("\n")) {
+    md = md
+      .split("\n")
+      .map((l) => (l === "" ? EMPTY_LINE_MARK : l))
+      .join("\n");
+  }
   return md;
 }
 
@@ -247,6 +282,16 @@ function tokenizeMarkdown(md: string, mode: TextMode): MdToken[] {
   };
   for (let i = 0; i < md.length;) {
     const c = md.charAt(i);
+    // A line holding only "\" is an empty line inside a paragraph.
+    if (
+      c === "\\" &&
+      mode === "paragraph" &&
+      (i === 0 || md.charAt(i - 1) === "\n") &&
+      (i + 1 === md.length || md.charAt(i + 1) === "\n")
+    ) {
+      i++;
+      continue;
+    }
     if (c === "\\" && i + 1 < md.length && ESCAPABLE.has(md.charAt(i + 1))) {
       text += md.charAt(i + 1);
       i += 2;
@@ -381,8 +426,22 @@ function escapeLineStarts(md: string): string {
     .join("\n");
 }
 
+/** Why a whole block stays a placeholder, as a rule name. */
+function blockShape(block: string): string {
+  if (block === "[p][/p]") return "empty paragraph";
+  if (/^\[h[1-6]\|/.test(block)) return "heading with an unknown parameter";
+  if (/^\[h[1-6]\]/.test(block)) return "heading that did not convert back exactly";
+  if (block.startsWith(LIST_OPEN)) return "list in another layout";
+  if (/\[\/(p|h[1-6])\][ \t]*\S/.test(block)) return "several blocks on one line";
+  if (/^\[p\]/.test(block) && /\[(ul|h[1-6]|p)[\]|]/.test(block.slice(3)))
+    return "paragraph containing a block tag";
+  if (/^\[p\]/.test(block)) return "paragraph that did not convert back exactly";
+  if (block.startsWith("[")) return "line wrapped in another tag";
+  return "other block";
+}
+
 /** One block of a paragraph-mode field → Markdown (a placeholder when not exact). */
-function blockToMarkdown(block: string, raws: string[]): string {
+function blockToMarkdown(block: string, c: Collector): string {
   if (SIDEBAR_LINE.test(block) && mdBlockToBbcode(block) === block) return block;
 
   // Lists: [ul]\n- item\n-- sub-item\n[/ul]
@@ -390,7 +449,7 @@ function blockToMarkdown(block: string, raws: string[]): string {
     const lines = block.slice(LIST_OPEN.length + 1, -(LIST_CLOSE.length + 1)).split("\n");
     if (lines.length && lines.every((l) => BB_ITEM.test(l))) {
       for (const a of ATTEMPTS) {
-        const local: string[] = [];
+        const local = collector();
         const md = lines
           .map((l) => {
             const m = BB_ITEM.exec(l);
@@ -399,12 +458,12 @@ function blockToMarkdown(block: string, raws: string[]): string {
           })
           .join("\n");
         if (safeBlock(md, block)) {
-          raws.push(...local);
+          absorb(c, local);
           return md;
         }
       }
     }
-    return placeholder(block, raws);
+    return placeholder(block, c, blockShape(block));
   }
 
   const pInner = P_BLOCK.exec(block)?.[1];
@@ -413,7 +472,7 @@ function blockToMarkdown(block: string, raws: string[]): string {
   const source = isP ? pInner : h?.[3];
   if (source !== undefined) {
     for (const a of ATTEMPTS) {
-      const local: string[] = [];
+      const local = collector();
       const inner = inlineToMarkdown(source, { mode: "paragraph", ...a }, local);
       // Escape line starts only when the unescaped text would read as something else.
       const candidates = isP
@@ -421,13 +480,13 @@ function blockToMarkdown(block: string, raws: string[]): string {
         : [`${"#".repeat(Number(h?.[1]))} ${inner}${h?.[2] ? ` {#${h[2]}}` : ""}`];
       for (const md of candidates) {
         if (safeBlock(md, block)) {
-          raws.push(...local);
+          absorb(c, local);
           return md;
         }
       }
     }
   }
-  return placeholder(block, raws);
+  return placeholder(block, c, blockShape(block));
 }
 
 /**
@@ -435,28 +494,46 @@ function blockToMarkdown(block: string, raws: string[]): string {
  * lines, [ul]…[/ul] lists, sidebar lines and other tag-wrapped lines; blank
  * characters around the field are kept apart.
  */
-function paragraphBlocks(
-  bb: string,
-): { lead: string; trail: string; blocks: string[] } | FallbackReason {
+/** Shape of a line that is not a block, as a rule name (no content). */
+function lineShape(l: string): string {
+  if (l.endsWith("\r")) return "line ends with CR";
+  if (/^--/.test(l) && l.includes("::")) {
+    if (/^-- /.test(l)) return "sidebar-like line: space after --";
+    if (/\s$/.test(l)) return "sidebar-like line: trailing blank";
+    if (!/--$/.test(l)) return "sidebar-like line: no closing --";
+    return "sidebar-like line: other";
+  }
+  if (/^--?\s/.test(l)) return "list item outside [ul]";
+  if (/^\[p\]/.test(l)) return "paragraph continues on the next line (raw newline inside [p])";
+  if (/\[\/p\]$/.test(l)) return "paragraph continued from the previous line";
+  if (l.startsWith("[")) return "line starts with a tag but ends with text";
+  if (l.endsWith("]")) return "line ends with a tag but starts with text";
+  if (/\[[A-Za-z]/.test(l)) return "text line with tags inside";
+  return "text line without tags";
+}
+
+type BlockSplit = { lead: string; trail: string; blocks: string[] };
+
+function paragraphBlocks(bb: string): BlockSplit | { reason: FallbackReason; detail?: string } {
   const lead = /^[ \t\r\n]*/.exec(bb)?.[0] ?? "";
   const core = bb.slice(lead.length);
   const trail = /[ \t\r\n]*$/.exec(core)?.[0] ?? "";
   const body = core.slice(0, core.length - trail.length);
-  if (!/\[p\]|\[h[1-6][\]|]|\[ul\]/.test(body)) return "no-block-tags";
+  if (!/\[p\]|\[h[1-6][\]|]|\[ul\]/.test(body)) return { reason: "no-block-tags" };
   const lines = body.split("\n");
   const blocks: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i] ?? "";
     if (l === LIST_OPEN) {
       const end = lines.indexOf(LIST_CLOSE, i + 1);
-      if (end < 0) return "unclosed-list";
+      if (end < 0) return { reason: "unclosed-list" };
       blocks.push(lines.slice(i, end + 1).join("\n"));
       i = end;
       continue;
     }
-    if (l === "") return "empty-line";
+    if (l === "") return { reason: "empty-line" };
     if (SIDEBAR_LINE.test(l) || (l.startsWith("[") && l.endsWith("]"))) blocks.push(l);
-    else return "line-outside-blocks";
+    else return { reason: "line-outside-blocks", detail: lineShape(l) };
   }
   return { lead, trail, blocks };
 }
@@ -472,38 +549,38 @@ export function bbcodeToMarkdown(bb: string): MarkdownView {
   const view = (
     markdown: string,
     layout: Layout,
-    raws: string[],
+    c: Collector,
     extra: Partial<MarkdownView> = {},
   ): MarkdownView => ({
     markdown,
     layout,
     mode: layout.mode,
-    hasPlaceholders: raws.length > 0,
-    placeholderRaws: raws,
+    hasPlaceholders: c.raws.length > 0,
+    placeholderRaws: c.raws,
+    placeholderShapes: c.shapes,
     rawFallback: false,
     ...extra,
   });
-  if (bb === "") return view("", PARAGRAPH, []);
+  if (bb === "") return view("", PARAGRAPH, collector());
 
   const split = paragraphBlocks(bb);
-  let reason: FallbackReason;
-  if (typeof split === "string") reason = split;
+  let why: { fallbackReason: FallbackReason; fallbackDetail?: string };
+  if ("reason" in split) why = { fallbackReason: split.reason, fallbackDetail: split.detail };
   else {
-    const raws: string[] = [];
-    const markdown = split.blocks.map((b) => blockToMarkdown(b, raws)).join("\n\n");
+    const c = collector();
+    const markdown = split.blocks.map((b) => blockToMarkdown(b, c)).join("\n\n");
     const layout: Layout = { mode: "paragraph", lead: split.lead, trail: split.trail };
-    if (markdownToBbcode(markdown, layout) === bb) return view(markdown, layout, raws);
-    reason = "paragraph-check-failed";
+    if (markdownToBbcode(markdown, layout) === bb) return view(markdown, layout, c);
+    why = { fallbackReason: "paragraph-check-failed" };
   }
 
   for (const a of ATTEMPTS) {
-    const raws: string[] = [];
-    const md = inlineToMarkdown(bb, { mode: "plain", ...a }, raws);
-    if (markdownToBbcode(md, PLAIN) === bb)
-      return view(md, PLAIN, raws, { fallbackReason: reason });
+    const c = collector();
+    const md = inlineToMarkdown(bb, { mode: "plain", ...a }, c);
+    if (markdownToBbcode(md, PLAIN) === bb) return view(md, PLAIN, c, why);
   }
-  const raws: string[] = [];
-  return view(placeholder(bb, raws), PLAIN, raws, { rawFallback: true, fallbackReason: reason });
+  const c = collector();
+  return view(placeholder(bb, c, "whole field"), PLAIN, c, { rawFallback: true, ...why });
 }
 
 export function markdownToBbcode(md: string, layout: Layout | TextMode): string {

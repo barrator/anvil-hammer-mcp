@@ -75,6 +75,12 @@ const FIXTURES: Record<string, string> = {
   "paragraph starting with a dash":
     "[p]- dialogue[/p]\n[p]Intro[br]- point[/p]\n[p]-- pas une liste[/p]",
   "heading text ending like an id": "[h2]T {#abc}[/h2]",
+  "sidebar lines before, between and after paragraphs":
+    "--Clé::Valeur--\n[p]a[/p]\n--Autre::Valeur--\n[p]b[/p]\n--Fin::x--\n",
+  "line breaks at the start, the end, and doubled": "[p][br]a[br][br]b[br][/p]\n[p][br][/p]",
+  "literal backslash lines": "[p]\\[br]\\\\[br]a\\[/p]",
+  "raw newline inside a paragraph": "[p]a\nb[/p]",
+  "sidebar-like line with a space after --": "[p]a[/p]\n-- Clé::Valeur--",
   "sidebar lines between paragraphs":
     "[p]Intro[/p]\n--Population::12--\n--Ruler::Invented--\n[p]Fin[/p]",
   "sidebar line inside a paragraph": "[p]--Population::12--[br]--Ruler::Invented--[/p]",
@@ -142,6 +148,9 @@ describe("BBCode → Markdown → BBCode is byte-identical", () => {
       " {#a}",
       "[p][/p]",
       "-- nom : x",
+      "\\\n",
+      "[br][br]",
+      "--A::b--\n",
     ];
     let seed = 42;
     const rand = () => {
@@ -253,6 +262,46 @@ describe("readable Markdown for the editor's forms", () => {
     expect(bbcodeToMarkdown(FIXTURES["dashes"]!).markdown).toBe(
       "Il vint — enfin — en 1914–1918 ; – réplique.",
     );
+  });
+
+  it("a sidebar line alone on its line is a block before, between or after paragraphs", () => {
+    const v = bbcodeToMarkdown(FIXTURES["sidebar lines before, between and after paragraphs"]!);
+    expect(v.mode).toBe("paragraph");
+    expect(v.hasPlaceholders).toBe(false);
+    expect(v.markdown).toBe("--Clé::Valeur--\n\na\n\n--Autre::Valeur--\n\nb\n\n--Fin::x--");
+  });
+
+  it("line breaks at a paragraph's start or end, or doubled, convert with a '\\' line", () => {
+    const v = bbcodeToMarkdown(FIXTURES["line breaks at the start, the end, and doubled"]!);
+    expect(v.mode).toBe("paragraph");
+    expect(v.hasPlaceholders).toBe(false);
+    expect(v.markdown).toBe("\\\na\n\\\nb\n\\\n\n\\\n\\");
+    expect(markdownToBbcode("a\n\\\nb", "paragraph")).toBe("[p]a[br][br]b[/p]");
+  });
+
+  it("names the rule behind each placeholder and each plain-mode fallback, without content", () => {
+    expect(bbcodeToMarkdown("[p]a[/p]\n[p][/p]").placeholderShapes).toEqual(["empty paragraph"]);
+    expect(bbcodeToMarkdown("[p]a[/p][p]b[/p]").placeholderShapes).toEqual([
+      "several blocks on one line",
+    ]);
+    expect(bbcodeToMarkdown("[p]x [u]y[/u][/p]").placeholderShapes).toEqual([
+      "inline tag without a Markdown form",
+      "inline tag without a Markdown form",
+    ]);
+    expect(bbcodeToMarkdown("[p]a[/p]\n-- Clé::Valeur--")).toMatchObject({
+      fallbackReason: "line-outside-blocks",
+      fallbackDetail: "sidebar-like line: space after --",
+    });
+    expect(bbcodeToMarkdown("[p]a\nb[/p]").fallbackDetail).toBe(
+      "paragraph continues on the next line (raw newline inside [p])",
+    );
+    expect(bbcodeToMarkdown("[p]a[/p]\ntexte").fallbackDetail).toBe("text line without tags");
+    expect(bbcodeToMarkdown("[p]a[/p]\n- item").fallbackDetail).toBe("list item outside [ul]");
+    expect(
+      bbcodeToMarkdown("[p]a[/p]\ntexte").placeholderShapes.every(
+        (x) => x === "tag in a plain-mode field",
+      ),
+    ).toBe(true);
   });
 
   it("reports why a field stays in plain mode", () => {

@@ -117,6 +117,9 @@ const BASE: Record<string, TypeDef> = {
       authornotes: bb(),
       scrapbook: bb(),
       credits: bb(),
+      // A generic article field: the template probe did not list it as template-specific, and the
+      // stage C BBCode probe found BBCode in it (organization articles, second world).
+      history: bb(),
       position: spec("integer"),
       wordcount: spec("integer", { writable: false }),
       publicationDate: spec("date"),
@@ -125,8 +128,6 @@ const BASE: Record<string, TypeDef> = {
       histories: spec("refs", { refType: "history" }),
       editURL: spec("string", { writable: false }),
     },
-    // Stage C probe, second world: "history" held BBCode in 10 articles of templates not yet probed.
-    textFieldNames: ["history"],
     templates: {
       location: {
         description: "Location template (the only template the spec documents). Not probed yet.",

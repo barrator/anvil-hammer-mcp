@@ -66,15 +66,18 @@ describe("BBCode probe", () => {
       placeholderKinds: {} as Counter,
     };
     const inc = (c: Counter, k: string) => (c[k] = (c[k] ?? 0) + 1);
-    /** Kind of a placeholder, without its content. */
-    const kindOf = (raw: string): string => {
-      if (raw === "[p][/p]") return "empty paragraph";
-      if (/^\[h[1-6]\|/.test(raw)) return "heading with a parameter";
-      if (raw.startsWith("[ul]")) return "list in another layout";
-      if (/^\[p\]/.test(raw) && /\[\/p\]$/.test(raw)) return "paragraph that did not convert";
+    /**
+     * Kind of a placeholder: the converter's rule name, plus the tag name when it
+     * is a known World Anvil tag (unknown names could be the owner's words).
+     */
+    const kindOf = (raw: string, shape: string): string => {
       const tag = /^\[\/?([A-Za-z][A-Za-z0-9_-]{0,30})/.exec(raw)?.[1]?.toLowerCase();
-      if (tag) return KNOWN_TAGS.has(tag) ? `tag [${tag}]` : "unknown tag";
-      return raw.includes("\n") ? "multi-line block" : "other";
+      const withTag =
+        shape.startsWith("tag in") ||
+        shape.startsWith("inline tag") ||
+        shape.startsWith("unpaired");
+      if (!withTag || !tag) return shape;
+      return `${shape}: ${KNOWN_TAGS.has(tag) ? `[${tag}]` : "unknown tag"}`;
     };
     const checkRoundTrip = (field: string, bb: string) => {
       if (bb === "") return;
@@ -82,9 +85,13 @@ describe("BBCode probe", () => {
       roundTrip.modes[v.mode] = (roundTrip.modes[v.mode] ?? 0) + 1;
       if (v.hasPlaceholders) roundTrip.withPlaceholders++;
       if (v.rawFallback) roundTrip.shownWholeRaw++;
-      if (v.fallbackReason) inc(roundTrip.plainModeReasons, `${field}: ${v.fallbackReason}`);
-      for (const raw of v.rawFallback ? [] : v.placeholderRaws)
-        inc(roundTrip.placeholderKinds, kindOf(raw));
+      if (v.fallbackReason) {
+        const detail = v.fallbackDetail ? ` (${v.fallbackDetail})` : "";
+        inc(roundTrip.plainModeReasons, `${field}: ${v.fallbackReason}${detail}`);
+      }
+      v.placeholderRaws.forEach((raw, k) =>
+        inc(roundTrip.placeholderKinds, kindOf(raw, v.placeholderShapes[k] ?? "other")),
+      );
       if (markdownToBbcode(v.markdown, v.layout) === bb) roundTrip.identical++;
       else {
         roundTrip.different++;
