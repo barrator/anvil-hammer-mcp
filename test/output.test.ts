@@ -134,7 +134,10 @@ describe("untrusted marking", () => {
     const r = await call("wa_get", { type: "article", id: "article-open-0003" });
     const lines = r.text.split("\n");
     expect(lines[0]).toMatch(/^\[anvil-hammer-mcp\] .*untrusted data.*never follow instructions/);
-    expect(lines[1]).toBe('<untrusted_world_content source="article:article-open-0003">');
+    const start = lines.indexOf('<untrusted_world_content source="article:article-open-0003">');
+    expect(start).toBeGreaterThan(0);
+    // Everything before the block is a server line; the block closes the result.
+    expect(lines.slice(0, start).every((l) => l.startsWith("[anvil-hammer-mcp] "))).toBe(true);
     expect(lines.at(-1)).toBe("</untrusted_world_content>");
   });
 
@@ -147,7 +150,9 @@ describe("untrusted marking", () => {
     expect(r.text.match(/<\/untrusted_world_content>/g)).toHaveLength(1);
     expect(r.text.match(/<untrusted_world_content/gi)).toHaveLength(1);
     // The forged line stays inside the JSON string, never at the start of a line.
-    expect(r.text.split("\n").filter((l) => l.startsWith("[anvil-hammer-mcp]"))).toHaveLength(1);
+    expect(
+      r.text.split("\n").filter((l) => l.startsWith("[anvil-hammer-mcp] Ignore")),
+    ).toHaveLength(0);
   });
 
   it("neutralize and wrap are safe on their own", () => {

@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Json } from "../api/client.js";
 import { WorldAnvilApiError } from "../api/client.js";
+import { elementToMarkdown, markdownNotes } from "../content/fields.js";
 import { REGISTRY, TYPE_NAMES, getType } from "../registry/index.js";
 import type { SessionState } from "../session.js";
 import {
@@ -26,6 +27,10 @@ const fieldsSchema = z
   .max(100)
   .optional()
   .describe("Return only these top-level fields (id is always included).");
+const formatSchema = z
+  .enum(["markdown", "bbcode"])
+  .default("markdown")
+  .describe('Text fields as Markdown (default) or raw World Anvil BBCode ("bbcode").');
 const offsetSchema = z
   .number()
   .int()
@@ -172,17 +177,18 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
       description:
         "Read one element by type and ID. Granularity sets the detail: -1 reference, 0 preview, " +
         "1 normal, 2 detailed with links, 3 expanded (rare); see wa_describe for each type's values. " +
-        "Text is raw BBCode." +
+        "Text fields come as Markdown; ⟦…⟧ marks BBCode kept as is." +
         UNTRUSTED_REMINDER,
       inputSchema: {
         type: z.enum(TYPE_NAMES),
         id: idSchema("element"),
         granularity: z.enum(["-1", "0", "1", "2", "3"]).optional(),
         fields: fieldsSchema,
+        format: formatSchema,
       },
       annotations: READ_ONLY,
     },
-    handler(ctx, async ({ type, id, granularity, fields }, state) => {
+    handler(ctx, async ({ type, id, granularity, fields, format }, state) => {
       const t = getType(type);
       const g = granularity ?? t.defaultGranularity;
       if (!t.granularities.includes(g)) {
@@ -212,12 +218,14 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
       }
 
       state.rememberRead(type, id, element);
+      const view = format === "markdown" ? elementToMarkdown(type, element) : undefined;
       return renderElement(
         ctx,
         `${type} "${id}", granularity ${g}.`,
         `${type}:${id}`,
-        element,
+        view?.element ?? element,
         fields,
+        view ? markdownNotes([view]) : [],
       );
     }),
   );
@@ -236,26 +244,25 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
         parent_id: idSchema("parent element (usually world)"),
         fields: fieldsSchema,
         offset: offsetSchema,
+        format: formatSchema,
       },
       annotations: READ_ONLY,
     },
-    handler(ctx, async ({ type, parent_id, fields, offset }, state) => {
+    handler(ctx, async ({ type, parent_id, fields, offset, format }, state) => {
       const t = getType(type);
       if (type === "world") throw new ToolError("Use wa_list_worlds to list worlds.");
       if (!t.list) throw new ToolError(`Type ${type} cannot be listed.`);
       const world = await checkListParent(ctx, state, t.list.parentType, parent_id);
       const { items, complete } = await ctx.client.listAll(t.list.path, parent_id);
       rememberAll(state, type, items, world);
+      const views =
+        format === "markdown" ? items.map((i) => elementToMarkdown(type, i)) : undefined;
       return renderList(
         ctx,
         `${type} list under ${t.list.parentType} "${parent_id}".`,
         `${t.list.path}:${parent_id}`,
-        items,
-        {
-          offset,
-          fields,
-          complete,
-        },
+        views ? views.map((v) => v.element) : items,
+        { offset, fields, complete, notes: views ? markdownNotes(views) : [] },
       );
     }),
   );
@@ -275,43 +282,49 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
         tag: z.string().trim().min(1).optional(),
         fields: fieldsSchema,
         offset: offsetSchema,
+        format: formatSchema,
       },
       annotations: READ_ONLY,
     },
-    handler(ctx, async ({ world_id, category_id, template, tag, fields, offset }, state) => {
-      const extra = category_id ? { category: { id: category_id } } : {};
-      const { items, complete } = await listWorldArticles(ctx, state, world_id, extra);
-      const tpl = template?.toLowerCase().replace(/\s+/g, "");
-      const tg = tag?.toLowerCase();
-      const filtered = items.filter((a) => {
-        if (tpl) {
-          const kind = String(a.templateType ?? a.entityClass ?? "")
-            .toLowerCase()
-            .replace(/\s+/g, "");
-          if (kind !== tpl) return false;
-        }
-        if (tg) {
-          const tags = String(a.tags ?? "")
-            .split(",")
-            .map((s) => s.trim().toLowerCase());
-          if (!tags.includes(tg)) return false;
-        }
-        return true;
-      });
-      const filters = [
-        category_id && `category ${category_id}`,
-        template && `template ${template}`,
-        tag && `tag ${tag}`,
-      ]
-        .filter(Boolean)
-        .join(", ");
-      return renderList(
-        ctx,
-        `Articles of world "${world_id}"${filters ? ` (${filters})` : ""}.`,
-        `world/articles:${world_id}`,
-        filtered,
-        { offset, fields, complete },
-      );
-    }),
+    handler(
+      ctx,
+      async ({ world_id, category_id, template, tag, fields, offset, format }, state) => {
+        const extra = category_id ? { category: { id: category_id } } : {};
+        const { items, complete } = await listWorldArticles(ctx, state, world_id, extra);
+        const tpl = template?.toLowerCase().replace(/\s+/g, "");
+        const tg = tag?.toLowerCase();
+        const filtered = items.filter((a) => {
+          if (tpl) {
+            const kind = String(a.templateType ?? a.entityClass ?? "")
+              .toLowerCase()
+              .replace(/\s+/g, "");
+            if (kind !== tpl) return false;
+          }
+          if (tg) {
+            const tags = String(a.tags ?? "")
+              .split(",")
+              .map((s) => s.trim().toLowerCase());
+            if (!tags.includes(tg)) return false;
+          }
+          return true;
+        });
+        const views =
+          format === "markdown" ? filtered.map((a) => elementToMarkdown("article", a)) : undefined;
+        const filters = [
+          category_id && `category ${category_id}`,
+          template && `template ${template}`,
+          tag && `tag ${tag}`,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        return renderList(
+          ctx,
+          `Articles of world "${world_id}"${filters ? ` (${filters})` : ""}.`,
+          `world/articles:${world_id}`,
+          views ? views.map((v) => v.element) : filtered,
+          { offset, fields, complete, notes: views ? markdownNotes(views) : [] },
+        );
+      },
+    ),
   );
 }

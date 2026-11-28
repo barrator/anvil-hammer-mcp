@@ -33,6 +33,26 @@ const expected = z
   .min(1)
   .optional()
   .describe("The updateDate you expect the element to have; the write is refused if it differs.");
+const rawBbcode = z
+  .boolean()
+  .default(false)
+  .describe("Text fields are given as raw World Anvil BBCode instead of Markdown.");
+const replaceFields = z
+  .array(z.string().min(1))
+  .max(50)
+  .optional()
+  .describe(
+    "Text fields whose whole existing text you really mean to replace. Without it, replacing a non-empty text field is refused; prefer append.",
+  );
+const TEXT_NOTE =
+  " Text fields take Markdown (paragraphs separated by a blank line, **bold**, *italic*, # headings, " +
+  "mentions as @[Title](Article:id)); keep any ⟦…⟧ exactly as read. Replacing a non-empty text field needs replace_fields.";
+const textOptions = (raw: boolean, replace?: string[], append?: Record<string, string>) => ({
+  textFormat: raw ? ("bbcode" as const) : ("markdown" as const),
+  replaceFields: replace,
+  append,
+});
+
 const linkValue = z.union([z.string().trim().min(1), z.array(z.string().trim().min(1)).min(1)]);
 const links = z
   .record(z.string(), linkValue)
@@ -117,11 +137,12 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       description:
         "Create any registered element type (except worlds). New elements are private and draft by default; " +
         'pass "state": "public" only when the user explicitly asks. Referenced elements must be in the same world. ' +
-        "Fields unknown to the registry are sent with a warning; the result lists fields World Anvil ignored.",
-      inputSchema: { type: z.enum(writableTypes), data, dry_run: dryRun },
+        "Fields unknown to the registry are sent with a warning; the result lists fields World Anvil ignored." +
+        TEXT_NOTE,
+      inputSchema: { type: z.enum(writableTypes), data, raw_bbcode: rawBbcode, dry_run: dryRun },
       annotations: WRITE,
     },
-    handler(ctx, async ({ type, data, dry_run }, state) =>
+    handler(ctx, async ({ type, data, raw_bbcode, dry_run }, state) =>
       render(
         ctx,
         await createElement(ctx, state, {
@@ -129,6 +150,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
           body: data,
           strictTemplates: false,
           dryRun: dry_run,
+          text: textOptions(raw_bbcode),
         }),
       ),
     ),
@@ -140,28 +162,37 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       title: "Update an element",
       description:
         "Update only the given fields of an element. A full backup is saved first and the result is read back." +
-        CONFLICT_NOTE,
+        CONFLICT_NOTE +
+        TEXT_NOTE,
       inputSchema: {
         type: z.enum(writableTypes),
         id: id("element"),
         data,
+        raw_bbcode: rawBbcode,
+        replace_fields: replaceFields,
         expected_update_date: expected,
         dry_run: dryRun,
       },
       annotations: WRITE,
     },
-    handler(ctx, async ({ type, id, data, expected_update_date, dry_run }, state) =>
-      render(
-        ctx,
-        await updateElement(ctx, state, {
-          type,
-          id,
-          body: data,
-          strictTemplates: false,
-          dryRun: dry_run,
-          expectedUpdateDate: expected_update_date,
-        }),
-      ),
+    handler(
+      ctx,
+      async (
+        { type, id, data, raw_bbcode, replace_fields, expected_update_date, dry_run },
+        state,
+      ) =>
+        render(
+          ctx,
+          await updateElement(ctx, state, {
+            type,
+            id,
+            body: data,
+            strictTemplates: false,
+            dryRun: dry_run,
+            expectedUpdateDate: expected_update_date,
+            text: textOptions(raw_bbcode, replace_fields),
+          }),
+        ),
     ),
   );
 
@@ -169,7 +200,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      "Article and template fields as raw BBCode text. Unknown fields of a probed template are refused; see wa_describe.",
+      "Article and template fields. Text fields in Markdown (or BBCode with raw_bbcode). Unknown fields of a probed template are refused; see wa_describe.",
     );
 
   server.registerTool(
@@ -179,7 +210,8 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       description:
         "Create an article of a template (person, organization, settlement, rank, location, article…). " +
         "Private and draft by default; public only if the user explicitly asks. For probed templates, unknown " +
-        "fields are refused before anything is sent; other templates accept them with a warning.",
+        "fields are refused before anything is sent; other templates accept them with a warning." +
+        TEXT_NOTE,
       inputSchema: {
         world_id: id("world"),
         title: z.string().trim().min(1).max(300),
@@ -189,6 +221,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
         category_id: z.string().trim().min(1).optional(),
         state: z.enum(["private", "public"]).optional(),
         is_draft: z.boolean().optional(),
+        raw_bbcode: rawBbcode,
         dry_run: dryRun,
       },
       annotations: WRITE,
@@ -213,6 +246,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
           strictTemplates: true,
           dryRun: a.dry_run,
           linkFields: Object.keys(a.links ?? {}),
+          text: textOptions(a.raw_bbcode),
         }),
       );
     }),
@@ -223,8 +257,10 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
     {
       title: "Update an article",
       description:
-        "Update only the given fields of an article, validated against its template. Backup first, read back after." +
-        CONFLICT_NOTE,
+        "Update only the given fields of an article, validated against its template. Backup first, read back after. " +
+        "To add text, use append (RECOMMENDED): it adds Markdown at the end of a text field without rewriting what is there." +
+        CONFLICT_NOTE +
+        TEXT_NOTE,
       inputSchema: {
         id: id("article"),
         title: z.string().trim().min(1).max(300).optional(),
@@ -233,6 +269,14 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
         category_id: z.string().trim().min(1).optional(),
         state: z.enum(["private", "public"]).optional(),
         is_draft: z.boolean().optional(),
+        append: z
+          .record(z.string(), z.string().min(1))
+          .optional()
+          .describe(
+            'Recommended way to edit text: Markdown added at the end of text fields, e.g. {"content": "A new paragraph."}. Existing text is kept byte for byte.',
+          ),
+        replace_fields: replaceFields,
+        raw_bbcode: rawBbcode,
         expected_update_date: expected,
         dry_run: dryRun,
       },
@@ -254,6 +298,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
           dryRun: a.dry_run,
           expectedUpdateDate: a.expected_update_date,
           linkFields: Object.keys(a.links ?? {}),
+          text: textOptions(a.raw_bbcode, a.replace_fields, a.append),
         }),
       );
     }),

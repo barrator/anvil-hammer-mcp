@@ -19,6 +19,7 @@ live-test-report.json
 live-template-report.json
 live-write-report.json
 live-bbcode-report.json
+live-content-report.json
 
 # Local data folders (backups, index, logs)
 data/

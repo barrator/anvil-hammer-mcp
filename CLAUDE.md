@@ -70,6 +70,8 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - Notes require an undocumented `type: "default"`.
 - Image upload is not implemented by the API. Images can only be referenced by ID once uploaded on the site.
 - Text is stored as BBCode, unchanged. Sidebar fields accept `--Key::Value--`, displayed as a "Key: Value" line.
+- The editor's layout (stage C probe, first world): every paragraph is `[p]…[/p]`, line breaks are `[br]` inside a paragraph, and paragraphs are separated by a single `\n` (never a blank line). Empty paragraphs `[p][/p]` are very common. Headings sit on their own line (`[h2]…[/h2]`); the editor may add an id (`[h1|<uuid>]…[/h1]`, to be confirmed by the second probe).
+- Mentions are stored as `@[Display name](Type:<uuid>)`. The editor writes the type `Article` with a capital A; elements created through the API may carry a template name in lowercase (`person`). They may follow a tag directly (`[p]@[…](…)`). Exact rendering of API-written mentions still to be confirmed live.
 - The API is beta: all routes live in the registry so they can be fixed in one place.
 
 ## Server rules (in code)
@@ -83,6 +85,7 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - **Conflicts without updateDate.** For an element returned without `updateDate`, the session keeps the content it last read; a write is refused if any of those fields now differs, and `expected_update_date` is refused.
 - **Restore.** Never sends placeholder references (`{"id": -1}`) or image references (cannot be checked yet; reported as not restored). A public backup is restored as private unless the call passes `restore_public: true`, for an existing or a deleted element alike.
 - **Backups.** Default folder `$XDG_DATA_HOME/anvil-hammer-mcp/backups` (else `~/.local/share/...`), never relative to the current directory; `WA_BACKUP_DIR` overrides. Files 0600, folders 0700, retention by the timestamp in the file name.
+- **Text fields (stage C).** Read tools show BBCode text fields as Markdown by default (`format: "bbcode"` for raw); write tools take Markdown unless `raw_bbcode: true`. The converter (`src/content/bbcode.ts`) guarantees a byte-identical round trip: anything it cannot convert exactly is kept as a `⟦raw BBCode⟧` placeholder. New text is written in the editor's form. Text sent back unchanged is not sent. Replacing a non-empty text field needs `replace_fields`; `append` (recommended) adds at the end and checks the existing text stayed intact. Mentions added to a text field must point to the same world (`Article` and template names resolve as articles; each target read once per session). Restore never converts.
 - **Registry status.** A field is `verified` only once a live-test run has observed it in a real response. Entries from the spec or from the quirks above start `unverified`. Promote them from the live report (`registry.observed`) by adding them to `src/registry/observed.ts`, the only place that marks anything verified.
 
 ## Live tests
@@ -91,7 +94,7 @@ Offline tests (`npm test`) never touch the network. Live tests (`npm run test:li
 
 - Config: `live-test.config.json` (gitignored), `{"testWorldId": "...", "ledgerFile": "live-test.ledger.json"}`; path overridable with `WA_LIVE_CONFIG`.
 - Keys: files only, `WA_APP_KEY_FILE` and `WA_AUTH_TOKEN_FILE`.
-- Commands: `npm run test:live` (stage A read), `test:live:templates` (template probe, read-only), `test:live:write` (stage B writes, deletes what it created), `test:live:cleanup` (deletes everything in the ledger), `test:live:bbcode` (stage C BBCode probe, read-only; its `localOnly` section may hold the owner's words and is never pasted). Prefix each with `WA_APP_KEY_FILE=... WA_AUTH_TOKEN_FILE=...`.
+- Commands: `npm run test:live` (stage A read), `test:live:templates` (template probe, read-only), `test:live:write` (stage B writes, deletes what it created), `test:live:cleanup` (deletes everything in the ledger), `test:live:bbcode` (stage C BBCode probe and real-text round trip, read-only; its `localOnly` section may hold the owner's words and is never pasted), `test:live:content` (stage C content test; keeps its `MCP-TEST-` articles for the owner to check the rendering, then `test:live:cleanup`). Prefix each with `WA_APP_KEY_FILE=... WA_AUTH_TOKEN_FILE=...`.
 - Write mode: a `PUT` must prove it targets the test world (`world.id`, or a parent in the ledger or discovered in the test world); created elements are recorded in the ledger automatically; `PATCH`/`DELETE` only on ledger elements.
 - Output: `live-test-report.json` (gitignored) and a printed summary holding structure only (field names, counts, pass/fail), safe to paste in a PR. Check details are sanitized: IDs and UUIDs are masked.
 - Any failed check, including checks made in `afterAll` (cleanup, harness refusals), fails the run.

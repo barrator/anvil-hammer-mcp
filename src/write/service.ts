@@ -13,6 +13,7 @@ import { refId } from "../resolver.js";
 import { type SessionState, normalizeUpdateDate } from "../session.js";
 import { type ToolContext, ToolError, notFound } from "../tools/context.js";
 import { type Backup, BackupError } from "./backups.js";
+import { type TextOptions, mentionTargetType, newMentions, prepareText } from "./text.js";
 import {
   type Comparison,
   ValidationError,
@@ -119,7 +120,23 @@ async function checkReferences(
   body: Json,
   worldId: string,
   template?: string,
+  current?: Json,
 ) {
+  // Mentions added to text fields must point to the same world (each target read once per session).
+  for (const m of newMentions(def, template, body, current)) {
+    const type = mentionTargetType(m.type);
+    if (!type) {
+      throw new ToolError(
+        `Refused: the mention of ${m.type} "${m.id}" in "${m.field}" cannot be checked against the world (unknown type). Nothing was sent.`,
+      );
+    }
+    const w = await ctx.resolver.resolve(state, type, m.id);
+    if (w !== worldId) {
+      throw new ToolError(
+        `Refused: "${m.field}" mentions ${m.type} "${m.id}", which is not in the same world (or not accessible). Nothing was sent.`,
+      );
+    }
+  }
   for (const ref of referencesIn(def, body, template)) {
     if (ref.unsupported) {
       throw new ToolError(
@@ -258,6 +275,8 @@ export interface CreateInput {
   noDefaults?: boolean;
   /** Fields given through `links`: must be link fields of the type/template. */
   linkFields?: string[];
+  /** Text fields: Markdown from the tools, raw BBCode from internal callers. Default "bbcode". */
+  text?: Omit<TextOptions, "isRestore">;
 }
 
 export async function createElement(
@@ -281,7 +300,11 @@ export async function createElement(
   } catch (err) {
     asToolError(err);
   }
-  let body = validated.body;
+  const text = prepareText(def, template, validated.body, undefined, {
+    textFormat: input.text?.textFormat ?? "bbcode",
+  });
+  let body = text.body;
+  validated.warnings.push(...text.warnings);
 
   // Which world? Its own reference, else a parent in the body.
   let worldId = refId(body.world);
@@ -343,6 +366,8 @@ export interface UpdateInput {
   /** Internal: restore uses the update path with its own backup reason. */
   reason?: "update" | "restore";
   linkFields?: string[];
+  /** Text fields: format, append, replace confirmation. Default: raw BBCode, no append. */
+  text?: Omit<TextOptions, "isRestore">;
 }
 
 export async function updateElement(
@@ -370,7 +395,14 @@ export async function updateElement(
   } catch (err) {
     asToolError(err);
   }
-  const body = { ...validated.body };
+  const text = prepareText(def, template, { ...validated.body }, current, {
+    textFormat: input.text?.textFormat ?? "bbcode",
+    replaceFields: input.text?.replaceFields,
+    append: input.text?.append,
+    isRestore: input.reason === "restore",
+  });
+  const body = text.body;
+  validated.warnings.push(...text.warnings);
 
   if ("world" in body) {
     const target = refId(body.world);
@@ -392,7 +424,7 @@ export async function updateElement(
   if (Object.keys(body).length === 0) throw new ToolError("Nothing to update: no field to send.");
 
   checkConflict(state, def.name, input.id, current, input.expectedUpdateDate);
-  await checkReferences(ctx, state, def, body, worldId, template);
+  await checkReferences(ctx, state, def, body, worldId, template, current);
 
   const planned: PlannedCall = { method: "PATCH", route: def.path, query: { id: input.id }, body };
   const base = {
@@ -408,6 +440,14 @@ export async function updateElement(
   const backup = takeBackup(ctx, def, input.id, worldId, input.reason ?? "update", current);
   await ctx.client.request<Json>("PATCH", def.path, { id: input.id }, body);
   const after = await readBack(ctx, state, def, input.id, worldId);
+  for (const [k, prefix] of Object.entries(text.appendedPrefixes)) {
+    const stored = typeof after[k] === "string" ? (after[k] as string) : "";
+    if (!stored.startsWith(prefix)) {
+      validated.warnings.push(
+        `WARNING: the existing text of "${k}" was not kept intact by World Anvil; check it and restore from the backup if needed.`,
+      );
+    }
+  }
   return {
     action: input.reason === "restore" ? "restored" : "updated",
     ...base,
