@@ -233,7 +233,7 @@ const BASE: Record<string, TypeDef> = {
     },
     quirks: [
       "No state, isDraft or isWip: the keys come back empty but are never stored (stage B write run).",
-      "No usable updateDate when read before a write: conflict detection compares content instead (stage B write run).",
+      "updateDate key present at every granularity but always empty: conflict detection compares content instead (stage B write run).",
     ],
   },
 
