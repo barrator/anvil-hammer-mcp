@@ -65,10 +65,11 @@ export function renderElement(
   source: string,
   element: Json,
   fields?: string[],
+  notes: string[] = [],
 ): CallToolResult {
   const picked = pickFields(compactElement(element), fields);
   const fit = fitElement(picked, ctx.maxResponseChars);
-  const lines = [serverLine(`${header} ${UNTRUSTED_NOTICE}`)];
+  const lines = [serverLine(`${header} ${UNTRUSTED_NOTICE}`), ...notes.map(serverLine)];
   lines.push(wrapUntrusted(source, JSON.stringify(fit.value, null, 2)));
   const missing = missingFields(compactElement(element), fields);
   if (missing.length) {
@@ -92,7 +93,7 @@ export function renderList(
   header: string,
   source: string,
   all: Json[],
-  opts: { offset: number; fields?: string[]; complete: boolean },
+  opts: { offset: number; fields?: string[]; complete: boolean; notes?: string[] },
 ): CallToolResult {
   const prepared = all.map((e) => pickFields(compactElement(e), opts.fields));
   const fit = fitList(prepared, opts.offset, ctx.maxResponseChars);
@@ -105,6 +106,7 @@ export function renderList(
     serverLine(
       `${header} ${all.length} item(s) in total; showing ${items.length ? `${opts.offset + 1}-${shownTo}` : "none"}. ${UNTRUSTED_NOTICE}`,
     ),
+    ...(opts.notes ?? []).map(serverLine),
     wrapUntrusted(source, JSON.stringify(items, null, 2)),
   ];
   if (fit.truncated) {

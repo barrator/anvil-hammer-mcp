@@ -73,6 +73,8 @@ export const LIVE_OBSERVED: Record<string, Observation> = {
       "url",
       "wordcount",
       "world",
+      // Stage C BBCode probe (second world, 2026-11-28): read in organization articles, holding BBCode.
+      "history",
     ],
     worldLink: true, // from granularity 1
     // Template probe of 2026-11-28 (stage B step 0): 15 articles read at granularity 2.

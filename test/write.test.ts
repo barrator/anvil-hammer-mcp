@@ -70,7 +70,11 @@ describe("safe defaults", () => {
   it("an update never touches state unless asked", async () => {
     const { call, fake } = await connect();
     await call("wa_get", { type: "article", id: "article-edit-0001" });
-    await call("wa_update_article", { id: "article-edit-0001", fields: { content: "New text." } });
+    await call("wa_update_article", {
+      id: "article-edit-0001",
+      replace_fields: ["content"],
+      fields: { content: "New text." },
+    });
     const patch = fake.calls.find((c) => c.method === "PATCH")!;
     expect(patch.body).toEqual({ content: "New text." });
   });
@@ -265,6 +269,7 @@ describe("dry run", () => {
     await call("wa_get", { type: "article", id: "article-edit-0001" });
     await call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "x" },
       dry_run: true,
     });
@@ -277,6 +282,7 @@ describe("conflict detection", () => {
     const { call, fake } = await connect();
     const r = await call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "x" },
     });
     expect(r.text).toMatch(/has not been read in this session. Read it first with wa_get/);
@@ -291,11 +297,13 @@ describe("conflict detection", () => {
     await bob.call("wa_get", { type: "article", id: "article-edit-0001" });
     const b = await bob.call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "Bob's text." },
     });
     expect(b.isError, b.text).toBe(false);
     const a = await alice.call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "Alice's text." },
     });
     expect(a.isError).toBe(true);
@@ -310,12 +318,14 @@ describe("conflict detection", () => {
     const { call } = await connect();
     const r = await call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "x" },
       expected_update_date: "1999-01-01 00:00:00.000000",
     });
     expect(r.text).toMatch(/changed by someone else/);
     const ok = await call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "x" },
       expected_update_date: "2026-07-01 10:00:00.000000",
     });
@@ -326,12 +336,22 @@ describe("conflict detection", () => {
     const { call } = await connect();
     await call("wa_get", { type: "article", id: "article-edit-0001" });
     expect(
-      (await call("wa_update_article", { id: "article-edit-0001", fields: { content: "1" } }))
-        .isError,
+      (
+        await call("wa_update_article", {
+          id: "article-edit-0001",
+          replace_fields: ["content"],
+          fields: { content: "1" },
+        })
+      ).isError,
     ).toBe(false);
     expect(
-      (await call("wa_update_article", { id: "article-edit-0001", fields: { content: "2" } }))
-        .isError,
+      (
+        await call("wa_update_article", {
+          id: "article-edit-0001",
+          replace_fields: ["content"],
+          fields: { content: "2" },
+        })
+      ).isError,
     ).toBe(false);
   });
 });
@@ -342,6 +362,7 @@ describe("backups", () => {
     await call("wa_get", { type: "article", id: "article-edit-0001" });
     const r = await call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "Changed." },
     });
     expect(r.text).toMatch(/Backup saved before the change: \d{8}T\d{9}Z-[a-z0-9]{6}-update\.json/);
@@ -366,6 +387,7 @@ describe("backups", () => {
     await call("wa_get", { type: "article", id: "article-edit-0001" });
     const r = await call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "x" },
     });
     expect(r.isError).toBe(true);
@@ -377,12 +399,24 @@ describe("backups", () => {
     let now = new Date("2026-01-01T00:00:00Z");
     const { call, config } = await connect({ now: () => now, config: { backupRetentionDays: 90 } });
     await call("wa_get", { type: "article", id: "article-edit-0001" });
-    await call("wa_update_article", { id: "article-edit-0001", fields: { content: "a" } });
+    await call("wa_update_article", {
+      id: "article-edit-0001",
+      replace_fields: ["content"],
+      fields: { content: "a" },
+    });
     now = new Date("2026-03-01T00:00:00Z"); // 59 days later: kept
-    await call("wa_update_article", { id: "article-edit-0001", fields: { content: "b" } });
+    await call("wa_update_article", {
+      id: "article-edit-0001",
+      replace_fields: ["content"],
+      fields: { content: "b" },
+    });
     expect(backupFiles(config.backupDir)).toHaveLength(2);
     now = new Date("2026-04-15T00:00:00Z"); // 104 days after the first
-    await call("wa_update_article", { id: "article-edit-0001", fields: { content: "c" } });
+    await call("wa_update_article", {
+      id: "article-edit-0001",
+      replace_fields: ["content"],
+      fields: { content: "c" },
+    });
     const names = backupFiles(config.backupDir).map((f) => f.split("/").at(-1));
     expect(names).toHaveLength(2);
     expect(names.some((n) => n!.startsWith("20260101"))).toBe(false);
@@ -395,6 +429,7 @@ describe("restore", () => {
     await call("wa_get", { type: "article", id: "article-edit-0001" });
     await call("wa_update_article", {
       id: "article-edit-0001",
+      replace_fields: ["content"],
       fields: { content: "Changed.", nickname: "" },
     });
     const list = await call("wa_restore", { type: "article", id: "article-edit-0001" });
@@ -416,7 +451,11 @@ describe("restore", () => {
     const shared = createFakeWorldAnvil(seedData());
     const a = await connect({ shared });
     await a.call("wa_get", { type: "article", id: "article-edit-0001" });
-    await a.call("wa_update_article", { id: "article-edit-0001", fields: { content: "Changed." } });
+    await a.call("wa_update_article", {
+      id: "article-edit-0001",
+      replace_fields: ["content"],
+      fields: { content: "Changed." },
+    });
     shared.data.articles.find((x) => x.id === "article-edit-0001")!.updateDate = {
       date: "2030-01-01 00:00:00.000000",
     };
@@ -589,7 +628,11 @@ describe("restore details", () => {
     el.portrait = { id: "image-fake-0001", url: "https://fake.invalid/i.png" };
     const { call, fake } = await connect({ data });
     await call("wa_get", { type: "article", id: "article-edit-0001" });
-    await call("wa_update_article", { id: "article-edit-0001", fields: { content: "Changed." } });
+    await call("wa_update_article", {
+      id: "article-edit-0001",
+      replace_fields: ["content"],
+      fields: { content: "Changed." },
+    });
     el.portrait = { id: "image-fake-0002" }; // changed on the site meanwhile (no updateDate bump needed for the test)
     const list = await call("wa_restore", { type: "article", id: "article-edit-0001" });
     const backupId = /"backup_id": "([^"]+)"/.exec(list.text)![1]!;

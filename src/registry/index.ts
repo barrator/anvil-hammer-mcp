@@ -117,6 +117,9 @@ const BASE: Record<string, TypeDef> = {
       authornotes: bb(),
       scrapbook: bb(),
       credits: bb(),
+      // A generic article field: the template probe did not list it as template-specific, and the
+      // stage C BBCode probe found BBCode in it (organization articles, second world).
+      history: bb(),
       position: spec("integer"),
       wordcount: spec("integer", { writable: false }),
       publicationDate: spec("date"),
@@ -233,7 +236,7 @@ const BASE: Record<string, TypeDef> = {
     },
     quirks: [
       "No state, isDraft or isWip: the keys come back empty but are never stored (stage B write run).",
-      "No usable updateDate when read before a write: conflict detection compares content instead (stage B write run).",
+      "updateDate key present at every granularity but always empty: conflict detection compares content instead (stage B write run).",
     ],
   },
 

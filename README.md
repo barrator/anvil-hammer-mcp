@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant read and enrich **its owner's own** [World Anvil](https://www.worldanvil.com) worlds, safely.
 
-> **Status: work in progress.** Stage B: safe reads and writes, stdio only. Text is raw BBCode.
+> **Status: work in progress.** Stage C: safe reads and writes with Markdown text, stdio only.
 
 ## What it does today
 
@@ -30,6 +30,12 @@ Types covered so far: world, article, category, secret, subscriber group, timeli
 - **Read-back:** every create and update is read back. The result lists the fields stored, and warns about fields World Anvil accepted but did not store.
 - **Template fields:** for templates whose fields were listed from real responses (person, organization, settlement, rank), unknown fields are refused before anything is sent. Other templates accept fields with a warning.
 - **Dry run:** `dry_run: true` shows exactly what would be sent, without writing.
+
+### Text: Markdown and BBCode
+
+Text fields are shown and written as Markdown: paragraphs separated by a blank line, a line break inside a paragraph (a line holding only `\` is an empty line inside it), `**bold**`, `*italic*`, `~~strike~~`, `#` headings (an editor heading id shows as `{#id}`), `---` rules, `>` quotes, bullet lists (`-`, indented by two spaces per level) and numbered lists (`1.`), on three levels, and mentions as `@[Title](Article:<id>)`. Anything else appears as a `⟦…⟧` placeholder holding the original BBCode: inline tags such as `[u]` around readable text, and a whole block (a table, centred text, a check list…) as one placeholder on its own line, so the rest stays readable. A run of empty paragraphs shows as `⟦[p][/p]×N⟧`. Keep placeholders unchanged and they are written back exactly. Reading then writing back an unchanged text gives byte-identical BBCode. Pass `format: "bbcode"` to read raw BBCode and `raw_bbcode: true` to write it.
+
+To add text, use `append` on `wa_update_article`: it adds at the end of a field without rewriting it. Replacing the whole text of a non-empty field needs `replace_fields: ["content"]`, and the result lists any tags, mentions or key-value lines that disappeared.
 
 ### Backups and restore
 
