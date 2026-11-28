@@ -15,6 +15,22 @@ export interface ToolContext {
   sessions: SessionStore;
   redactor: Redactor;
   maxResponseChars: number;
+  /** Technical log hook (hosted mode): one record per tool call, never content. */
+  onToolCall?: (r: ToolCallRecord) => void;
+}
+
+/** What the technical log keeps of a tool call: identifiers and outcome only. */
+export interface ToolCallRecord {
+  tool: string;
+  world?: string;
+  element?: string;
+  type?: string;
+  /** List calls: the parent element listed under. */
+  parent?: string;
+  ms: number;
+  result: "ok" | "refused" | "error";
+  /** For errors: a category (World Anvil error kind or "unexpected"), never the message. */
+  error?: string;
 }
 
 /** A refusal or user-facing failure. Its message is shown as is (after redaction). */
@@ -44,17 +60,60 @@ export function errorResult(ctx: ToolContext, err: unknown): CallToolResult {
   };
 }
 
+const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+const refOf = (v: unknown) =>
+  v && typeof v === "object" ? str((v as Record<string, unknown>).id) : str(v);
+
+/** Identifiers of a call for the technical log; the world comes from the args or the session's resolution. */
+function callIds(
+  tool: string,
+  args: unknown,
+  state: SessionState,
+): Pick<ToolCallRecord, "world" | "element" | "type" | "parent"> {
+  const a = (args ?? {}) as Record<string, unknown>;
+  const data = (a.data ?? {}) as Record<string, unknown>;
+  const type = str(a.type) ?? (tool.includes("article") ? "article" : undefined);
+  const element = str(a.id);
+  const parent = str(a.parent_id);
+  let world = str(a.world_id) ?? refOf(data.world);
+  if (!world && type && element) world = state.worlds.get(`${type}:${element}`);
+  if (!world && type === "world") world = element;
+  return { world, element, type, parent };
+}
+
 /** Wrap a handler: errors become tool errors, never protocol errors. */
 export function handler<A>(
   ctx: ToolContext,
+  tool: string,
   fn: (args: A, state: SessionState) => Promise<CallToolResult>,
 ) {
   return async (args: A, extra: { sessionId?: string }): Promise<CallToolResult> => {
+    const state = ctx.sessions.get(extra.sessionId);
+    const started = performance.now();
+    let result: CallToolResult;
+    let outcome: Pick<ToolCallRecord, "result" | "error">;
     try {
-      return await fn(args, ctx.sessions.get(extra.sessionId));
+      result = await fn(args, state);
+      outcome = result.isError ? { result: "error", error: "tool" } : { result: "ok" };
     } catch (err) {
-      return errorResult(ctx, err);
+      result = errorResult(ctx, err);
+      if (err instanceof ToolError) outcome = { result: "refused" };
+      else if (err instanceof WorldAnvilApiError) outcome = { result: "error", error: err.kind };
+      else outcome = { result: "error", error: "unexpected" };
     }
+    if (ctx.onToolCall) {
+      try {
+        ctx.onToolCall({
+          tool,
+          ...callIds(tool, args, state),
+          ms: Math.round(performance.now() - started),
+          ...outcome,
+        });
+      } catch {
+        // Logging never breaks a tool call.
+      }
+    }
+    return result;
   };
 }
 

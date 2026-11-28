@@ -9,7 +9,7 @@ import { loadSecrets } from "../src/config/secrets.js";
 const dir = mkdtempSync(join(tmpdir(), "ahm-config-"));
 const file = (name: string, content: string) => {
   const p = join(dir, name);
-  writeFileSync(p, content);
+  writeFileSync(p, content, { mode: 0o600 });
   return p;
 };
 

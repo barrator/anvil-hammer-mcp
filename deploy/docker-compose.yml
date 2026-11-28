@@ -1,0 +1,108 @@
+# anvil-hammer-mcp, hosted mode. See docs/deployment.md.
+#
+#   server   the MCP server. Internal network only: no internet, no published port.
+#   gateway  the only container with internet access. It relays the reverse
+#            proxy's requests to the server, and lets the server reach
+#            www.worldanvil.com and claude.ai over HTTPS, nothing else.
+#
+# Settings come from .env next to this file (copy env.example).
+
+name: anvil-hammer-mcp
+
+services:
+  server:
+    image: ghcr.io/barrator/anvil-hammer-mcp:${ANVIL_HAMMER_VERSION:?set ANVIL_HAMMER_VERSION in .env}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${WA_SERVER_MEMORY:-256m}
+    cpus: ${WA_SERVER_CPUS:-1.0}
+    pids_limit: 64
+    environment:
+      WA_PUBLIC_URL: ${WA_PUBLIC_URL:?set WA_PUBLIC_URL in .env}
+      # Keys are files (Docker secrets), never values: docker inspect shows paths only.
+      WA_APP_KEY_FILE: /run/secrets/wa_app_key
+      WA_AUTH_TOKEN_FILE: /run/secrets/wa_auth_token
+      WA_PASSPHRASE_FILE: /run/secrets/wa_passphrase_hash
+      WA_ACCESS_FILE: /data/config/access.json
+      WA_TRUSTED_PROXY: 10.213.70.2
+      WA_OAUTH_CIMD_HOSTS: claude.ai
+      WA_ENABLE_DELETE: ${WA_ENABLE_DELETE:-false}
+      WA_BACKUP_RETENTION_DAYS: ${WA_BACKUP_RETENTION_DAYS:-90}
+      WA_LOG_RETENTION_DAYS: ${WA_LOG_RETENTION_DAYS:-180}
+      NODE_OPTIONS: --max-old-space-size=${WA_NODE_HEAP_MB:-160}
+    secrets:
+      - wa_app_key
+      - wa_auth_token
+      - wa_passphrase_hash
+    volumes:
+      - ./data/config:/data/config
+      - ./data/backups:/data/backups
+      - ./data/index:/data/index
+      - ./data/logs:/data/logs
+    extra_hosts:
+      # The only names the server needs; both lead to the gateway.
+      - "www.worldanvil.com:10.213.70.2"
+      - "claude.ai:10.213.70.2"
+    networks:
+      internal:
+        ipv4_address: 10.213.70.3
+    healthcheck:
+      test:
+        - CMD
+        - /nodejs/bin/node
+        - -e
+        - "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  gateway:
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+    restart: unless-stopped
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${WA_GATEWAY_MEMORY:-64m}
+    cpus: ${WA_GATEWAY_CPUS:-0.5}
+    pids_limit: 32
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      # Loopback only: the reverse proxy on the host is the way in.
+      - "127.0.0.1:${WA_HTTP_PORT:-8080}:8080"
+    networks:
+      internal:
+        ipv4_address: 10.213.70.2
+      edge:
+        ipv4_address: 10.213.71.2
+    depends_on:
+      - server
+
+networks:
+  internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.213.70.0/29
+  edge:
+    ipam:
+      config:
+        - subnet: 10.213.71.0/29
+
+secrets:
+  wa_app_key:
+    file: ./secrets/wa_app_key
+  wa_auth_token:
+    file: ./secrets/wa_auth_token
+  wa_passphrase_hash:
+    file: ./secrets/wa_passphrase_hash

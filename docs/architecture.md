@@ -130,7 +130,7 @@ A weekly GitHub Actions job downloads the official spec, compares it with the re
 
 - MCP Streamable HTTP.
 - **Built-in OAuth authorization server**, single user, following the MCP authorization specification:
-  - Dynamic Client Registration (RFC 7591) and Client ID Metadata Documents (Claude's published identity), the two methods Claude uses without configuration;
+  - Client ID Metadata Documents (Claude's published identity, fetched from `claude.ai` only) and optional pre-registered public clients; no Dynamic Client Registration (deprecated in the 2026-07-28 spec; decision of 2026-11-28);
   - PKCE required (S256); short-lived access tokens with refresh;
   - the authorization page asks for a **passphrase** read from a secret file (stored as a hash), with attempt limiting;
   - allowed redirect URIs: Claude's (`https://claude.ai/api/mcp/auth_callback` and Claude Code's loopback redirects), configurable;
@@ -144,7 +144,7 @@ A weekly GitHub Actions job downloads the official spec, compares it with the re
 - Base image pinned by digest; dependencies pinned by lockfile; automated update PRs (Dependabot or Renovate).
 - Keys read from **files** mounted read-only (`WA_APP_KEY_FILE`, `WA_AUTH_TOKEN_FILE`, passphrase file) via Docker Compose secrets. Never from environment variables (visible in `docker inspect`). Startup fails if a file is missing or too permissive.
 - Non-root user; read-only root filesystem except data volumes and a `tmpfs`; `cap_drop: [ALL]`; `no-new-privileges`; memory, CPU and PID limits; port published on `127.0.0.1` only, behind a reverse proxy with TLS (Caddy example provided).
-- **Egress proxy** in the compose file: the server container sits on an internal network with no internet access and can only reach the proxy, which allows only `www.worldanvil.com` over HTTPS. Filtering by domain name, not IP (World Anvil is behind Cloudflare).
+- **Egress proxy** in the compose file: the server container sits on an internal network with no internet access and can only reach the proxy, which allows only `www.worldanvil.com` (and `claude.ai`, for client metadata documents) over HTTPS. Filtering by domain name, not IP (World Anvil is behind Cloudflare).
 - Volumes:
 
 | Volume | Content | Sensitivity |

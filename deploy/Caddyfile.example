@@ -1,0 +1,21 @@
+# Caddy on the host, in front of the gateway's port on 127.0.0.1.
+# Replace the name with yours (WA_PUBLIC_URL without https://) and the port
+# with WA_HTTP_PORT. Caddy obtains the TLS certificate by itself.
+#
+# Caddy sets X-Forwarded-For to the client address and ignores the value a
+# client sends, so the server's attempt limits see real addresses.
+
+wa.203-0-113-7.sslip.io {
+	reverse_proxy 127.0.0.1:8080
+
+	# Optional, only if you use the Claude apps (web, desktop, mobile) and not
+	# Claude Code: accept the MCP and token endpoints from Anthropic's addresses
+	# only. Keep /authorize and /.well-known open: your own browser opens the
+	# sign-in page.
+	#
+	# @outside {
+	# 	path /mcp /mcp/* /token /revoke
+	# 	not remote_ip 160.79.104.0/21
+	# }
+	# respond @outside 403
+}

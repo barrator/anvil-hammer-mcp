@@ -47,8 +47,8 @@ export function defaultBackupDir(env: Env, home = homedir()): string {
   return join(base, SERVER_NAME, "backups");
 }
 
-export function loadConfig(env: Env = process.env): Config {
-  const secrets = loadSecrets(env);
+export function loadConfig(env: Env = process.env, o: { filesOnly?: boolean } = {}): Config {
+  const secrets = loadSecrets(env, o);
   const access = loadAccessPolicy(env.WA_ACCESS_FILE);
   const explicitDir = env.WA_BACKUP_DIR?.trim();
   return {
