@@ -218,3 +218,86 @@ describe("live report checks", () => {
     expect(detail.match(/<id>/g)).toHaveLength(2);
   });
 });
+
+describe("live-test harness guard, stage E reads", () => {
+  function readSetup(readOnly = true) {
+    const sent: string[] = [];
+    const lists: Record<string, unknown[]> = {
+      "/world/maps": [{ id: "map-in-test-0001" }],
+      "/map/layers": [{ id: "layer-in-test-0001" }],
+      "/world/images": [{ id: 501 }],
+      "/user/blocktemplates": [{ id: "blocktemplate-own-0001" }],
+      "/blocktemplate/blocktemplateparts": [{ id: "blocktemplatepart-own-0001" }],
+      "/markertypes": [{ id: "markertype-shared-0001" }],
+      "/rpgsystems": [{ id: 7 }],
+    };
+    const inner = (async (input: string | URL, init: RequestInit = {}) => {
+      const u = new URL(String(input));
+      sent.push(`${init.method ?? "GET"} ${u.pathname}`);
+      const key = u.pathname.replace(new URL(B).pathname, "");
+      if (key === "/identity") return new Response(JSON.stringify({ id: "user-own-0001" }));
+      if (lists[key]) return new Response(JSON.stringify({ success: true, entities: lists[key] }));
+      if (init.method === "PUT") return new Response(JSON.stringify({ id: "created-1" }));
+      return new Response("{}");
+    }) as typeof fetch;
+    const ledger = { has: () => false, record: () => {}, remove: () => {} };
+    return {
+      ...createGuardedFetch(inner, { testWorldId: TEST_WORLD, ledger, readOnly }),
+      sent,
+    };
+  }
+  const post = (g: ReturnType<typeof readSetup>, path: string) =>
+    g.fetch(`${B}/${path}`, { method: "POST", body: "{}" });
+
+  it("allows child lists of discovered elements, and reading what they return", async () => {
+    const g = readSetup();
+    await post(g, `world/maps?id=${TEST_WORLD}`);
+    await post(g, "map/layers?id=map-in-test-0001");
+    await g.fetch(`${B}/layer?id=layer-in-test-0001&granularity=2`);
+    expect(g.sent).toHaveLength(3);
+    await expect(post(g, "map/layers?id=map-elsewhere-0001")).rejects.toThrow(HarnessError);
+  });
+
+  it("matches numeric ids to the type they were listed as", async () => {
+    const g = readSetup();
+    await post(g, `world/images?id=${TEST_WORLD}`);
+    await g.fetch(`${B}/image?id=501&granularity=2`);
+    // The same number as a marker is another element, perhaps in another world.
+    await expect(g.fetch(`${B}/marker?id=501&granularity=2`)).rejects.toThrow(HarnessError);
+  });
+
+  it("allows the owner's own profile and block templates, and shared lists, read-only", async () => {
+    const g = readSetup();
+    await expect(g.fetch(`${B}/user?id=user-own-0001`)).rejects.toThrow(/token's own user/);
+    await g.fetch(`${B}/identity`);
+    await g.fetch(`${B}/user?id=user-own-0001&granularity=0`);
+    await expect(g.fetch(`${B}/user?id=user-other-0002`)).rejects.toThrow(HarnessError);
+    await post(g, "user/blocktemplates?id=user-own-0001");
+    await expect(post(g, "user/blocktemplates?id=user-other-0002")).rejects.toThrow(HarnessError);
+    await post(g, "blocktemplate/blocktemplateparts?id=blocktemplate-own-0001");
+    await g.fetch(`${B}/blocktemplatepart?id=blocktemplatepart-own-0001&granularity=0`);
+    await post(g, "markertypes");
+    await post(g, "rpgsystems");
+    await g.fetch(`${B}/markertype?id=markertype-shared-0001&granularity=0`);
+    await g.fetch(`${B}/rpgsystem?id=7&granularity=0`);
+    await expect(post(g, "markertypes?id=x")).rejects.toThrow(/takes no parent/);
+  });
+
+  it("never lets an account or shared element prove a create, nor be written", async () => {
+    const g = readSetup(false);
+    await g.fetch(`${B}/identity`);
+    await post(g, "user/blocktemplates?id=user-own-0001");
+    await expect(
+      g.fetch(`${B}/blocktemplatepart`, {
+        method: "PUT",
+        body: JSON.stringify({
+          title: "MCP-TEST-part",
+          template: { id: "blocktemplate-own-0001" },
+        }),
+      }),
+    ).rejects.toThrow(/parent known to be in it/);
+    await expect(
+      g.fetch(`${B}/blocktemplate?id=blocktemplate-own-0001`, { method: "PATCH", body: "{}" }),
+    ).rejects.toThrow(/not in the ledger/);
+  });
+});

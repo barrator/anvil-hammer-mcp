@@ -11,6 +11,12 @@ export interface TypeObservation {
   listed: number;
   listFields: string[];
   sampled: number;
+  /** field → JSON kinds seen with a non-empty value (stage E). */
+  kinds?: Record<string, string[]>;
+  /** verb → "ok" or the error kind (stage E). */
+  routes?: Record<string, string>;
+  /** BBCode-assumed fields: how many values held BBCode-like tags, and how many did not. */
+  bbcode?: Record<string, { withTags: number; plain: number }>;
   /** granularity → observation */
   granularities: Record<
     string,
@@ -94,6 +100,31 @@ export class LiveReport {
     return out;
   }
 
+  /**
+   * What observed.ts may take from this run (stage E): registry fields seen,
+   * the single JSON kind seen for each (when one), and the verbs that worked.
+   */
+  promotion() {
+    const out: Record<
+      string,
+      { fields: string[]; kinds: Record<string, string>; verbs: string[] }
+    > = {};
+    for (const [name, cmp] of Object.entries(this.registryComparison())) {
+      const obs = this.types[name]!;
+      const kinds: Record<string, string> = {};
+      for (const f of cmp.observed) {
+        const k = (obs.kinds?.[f] ?? []).filter((x) => x !== "null");
+        if (k.length === 1) kinds[f] = k[0]!;
+      }
+      const verbs = Object.entries(obs.routes ?? {})
+        .filter(([, v]) => v === "ok")
+        .map(([k]) => k)
+        .sort();
+      out[name] = { fields: cmp.observed, kinds, verbs };
+    }
+    return out;
+  }
+
   toJSON() {
     return {
       generatedAt: new Date().toISOString(),
@@ -101,6 +132,7 @@ export class LiveReport {
       quirks: this.quirks,
       types: this.types,
       registry: this.registryComparison(),
+      promotion: this.promotion(),
     };
   }
 

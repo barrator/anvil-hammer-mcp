@@ -3,6 +3,7 @@
  * All content is invented; all IDs are obviously fake.
  */
 import { WORLD_ANVIL_BASE_URL } from "../../src/constants.js";
+import { REGISTRY } from "../../src/registry/index.js";
 
 type Json = Record<string, unknown>;
 
@@ -207,6 +208,75 @@ export function seedData() {
     },
   );
 
+  // Stage E types. Image IDs are numbers, as on World Anvil.
+  const extra: Record<string, Json[]> = {
+    image: [
+      { id: 501, title: "Invented Portrait", world: wref("world-edit-0003") },
+      { id: 502, title: "Hidden Image", world: wref("world-blocked-0002") },
+      { id: 503, title: "Open Image", world: wref("world-open-0001") },
+    ],
+    notebook: [
+      {
+        id: "notebook-edit-0001",
+        title: "Invented Notebook",
+        world: wref("world-edit-0003"),
+        updateDate: date("2026-08-01"),
+      },
+    ],
+    notesection: [
+      {
+        id: "notesection-edit-0001",
+        title: "Invented Section",
+        notebook: { id: "notebook-edit-0001", title: "Invented Notebook", entityClass: "Notebook" },
+        updateDate: date("2026-08-02"),
+      },
+    ],
+    note: [
+      {
+        id: "note-edit-0001",
+        title: "Invented Note",
+        content: "[p]Invented note text.[/p]",
+        notesection: {
+          id: "notesection-edit-0001",
+          title: "Invented Section",
+          entityClass: "Notesection",
+        },
+        updateDate: date("2026-08-03"),
+      },
+    ],
+    markertype: [
+      { id: "markertype-shared-0001", title: "Invented Pin" },
+      { id: "markertype-hidden-0001", title: "Hidden Pin", world: wref("world-blocked-0002") },
+    ],
+    rpgsystem: [{ id: "rpgsystem-0001", title: "Invented System" }],
+    blocktemplate: [{ id: "blocktemplate-0001", title: "Invented Template" }],
+    blocktemplatepart: [
+      {
+        id: "blocktemplatepart-0001",
+        title: "Invented Part",
+        template: {
+          id: "blocktemplate-0001",
+          title: "Invented Template",
+          entityClass: "Blocktemplate",
+        },
+      },
+    ],
+    blockfolder: [
+      { id: "blockfolder-edit-0001", title: "Invented Folder", world: wref("world-edit-0003") },
+    ],
+    user: [
+      {
+        id: "user-fake-0001",
+        title: "fake-user",
+        username: "fake-user",
+        token: "fake-profile-token-ZZZZ9999",
+        email: "fake@example.invalid",
+        discordRefreshToken: "fake-discord-refresh-YYYY",
+        someNewField: "not registered",
+      },
+    ],
+  };
+
   return {
     worlds,
     articles,
@@ -215,6 +285,7 @@ export function seedData() {
     histories,
     categories,
     subscribergroups: [] as Json[],
+    extra,
   };
 }
 
@@ -257,6 +328,10 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
     category: data.categories,
     subscribergroup: (data as { subscribergroups?: Json[] }).subscribergroups ?? [],
   };
+  for (const name of Object.keys(REGISTRY)) collections[REGISTRY[name]!.path] ??= [];
+  for (const [k, list] of Object.entries((data as { extra?: Record<string, Json[]> }).extra ?? {}))
+    collections[k] = list;
+  const sameId = (e: Json, id: string | undefined) => String(e.id) === id;
   const ignore = options.ignore ?? defaultIgnore;
   let created = 0;
   let clock = 0;
@@ -340,6 +415,25 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
         const cat = (body.category as Json | undefined)?.id;
         if (cat) list = list.filter((a) => (a.category as Json | null)?.id === cat);
       }
+      if (!list) {
+        // Stage E: any registered list route.
+        const t = Object.values(REGISTRY).find((d) => d.list?.path === path);
+        if (t?.list) {
+          const items = collections[t.path] ?? [];
+          const pt = t.list.parentType;
+          const field =
+            t.parents.find((p) => p.type === pt)?.field ??
+            Object.entries(t.fields).find(([, f]) => f.refType === pt)?.[0];
+          list =
+            pt === "none" || pt === "user"
+              ? items
+              : pt === "world"
+                ? items.filter((e) => worldOf(e) === call.query.id)
+                : items.filter(
+                    (e) => field && (e[field] as Json | undefined)?.id === call.query.id,
+                  );
+        }
+      }
       if (!list) return htmlNotFound();
       return json({
         success: true,
@@ -377,7 +471,7 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
     if (call.method === "PATCH") {
       const coll = collections[path];
       if (!coll) return htmlNotFound();
-      const el = coll.find((e) => e.id === call.query.id);
+      const el = coll.find((e) => sameId(e, call.query.id));
       if (!el) return json({ success: false, error: "resource_not_found" }, 404);
       for (const [k, v] of Object.entries(call.body ?? {})) if (!ignore(path, k, v)) el[k] = v;
       el.updateDate = stamp();
@@ -387,7 +481,7 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
     if (call.method === "DELETE") {
       const coll = collections[path];
       if (!coll) return htmlNotFound();
-      const i = coll.findIndex((e) => e.id === call.query.id);
+      const i = coll.findIndex((e) => sameId(e, call.query.id));
       if (i < 0) return json({ success: false, error: "resource_not_found" }, 404);
       coll.splice(i, 1);
       return json({ success: true });
@@ -396,7 +490,7 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
     if (call.method === "GET") {
       const coll = collections[path];
       if (!coll) return htmlNotFound();
-      const el = coll.find((e) => e.id === call.query.id);
+      const el = coll.find((e) => sameId(e, call.query.id));
       if (!el) return json({ success: false, error: "resource_not_found" }, 404);
       const out = shape(el, Number(call.query.granularity ?? "0"));
       if (noDate.has(path)) delete out.updateDate;

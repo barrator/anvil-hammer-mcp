@@ -173,7 +173,7 @@ describe("links and references", () => {
     expect(writes(fake.calls)).toHaveLength(0);
   });
 
-  it("refuses a link on a non-link field and image references", async () => {
+  it("refuses a link on a non-link field, and an image not read in the same world", async () => {
     const { call, fake } = await connect();
     const a = await call("wa_create_article", {
       world_id: EDIT_WORLD,
@@ -188,8 +188,25 @@ describe("links and references", () => {
       template: "person",
       links: { portrait: "image-0001" },
     });
-    expect(b.text).toMatch(/image references cannot be checked/);
+    expect(b.text).toMatch(/links to image "image-0001", which is not in the same world/);
+    const c = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      template: "person",
+      links: { portrait: "503" }, // an image of another world
+    });
+    expect(c.text).toMatch(/links to image "503", which is not in the same world/);
     expect(writes(fake.calls)).toHaveLength(0);
+    const d = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      template: "person",
+      links: { portrait: "501" }, // read, and in the same world
+    });
+    expect(d.isError, d.text).toBe(false);
+    expect(fake.calls.filter((x) => x.method === "PUT").at(-1)!.body!.portrait).toEqual({
+      id: "501",
+    });
   });
 
   it("refuses to move an element to another world", async () => {
@@ -621,32 +638,35 @@ describe("elements without updateDate", () => {
 });
 
 describe("restore details", () => {
-  it("never sends a placeholder {id: -1} or an image reference", async () => {
+  it("never sends a placeholder {id: -1}; restores an image reference only for an image in the same world", async () => {
     const data = seedData();
-    const el = data.articles.find((a) => a.id === "article-edit-0001")!;
-    el.cover = { id: -1 };
-    el.portrait = { id: "image-fake-0001", url: "https://fake.invalid/i.png" };
+    const person = data.articles.find((a) => a.id === "article-edit-0001")!;
+    person.cover = { id: -1 };
+    person.portrait = { id: 501, url: "https://fake.invalid/i.png" }; // same world
+    const org = data.articles.find((a) => a.id === "article-edit-0002")!;
+    org.flag = { id: 502 }; // an image of a blocked world
     const { call, fake } = await connect({ data });
-    await call("wa_get", { type: "article", id: "article-edit-0001" });
-    await call("wa_update_article", {
-      id: "article-edit-0001",
-      replace_fields: ["content"],
-      fields: { content: "Changed." },
-    });
-    el.portrait = { id: "image-fake-0002" }; // changed on the site meanwhile (no updateDate bump needed for the test)
-    const list = await call("wa_restore", { type: "article", id: "article-edit-0001" });
-    const backupId = /"backup_id": "([^"]+)"/.exec(list.text)![1]!;
-    await call("wa_get", { type: "article", id: "article-edit-0001" });
-    const r = await call("wa_restore", {
-      type: "article",
-      id: "article-edit-0001",
-      backup_id: backupId,
-    });
-    const patch = fake.calls.filter((c) => c.method === "PATCH").at(-1)!.body!;
-    expect(patch).not.toHaveProperty("cover");
-    expect(patch).not.toHaveProperty("portrait");
-    expect(r.text).not.toMatch(/did NOT store: .*cover/);
-    expect(r.text).toMatch(/Image references are not restored.*portrait/);
+    const restoreLatest = async (id: string, change: () => void) => {
+      await call("wa_get", { type: "article", id });
+      await call("wa_update_article", { id, fields: { title: `Changed ${id}` } });
+      change(); // changed on the site meanwhile
+      const list = await call("wa_restore", { type: "article", id });
+      const backupId = /"backup_id": "([^"]+)"/.exec(list.text)![1]!;
+      await call("wa_get", { type: "article", id });
+      const r = await call("wa_restore", { type: "article", id, backup_id: backupId });
+      return { r, patch: fake.calls.filter((c) => c.method === "PATCH").at(-1)!.body! };
+    };
+
+    const p = await restoreLatest("article-edit-0001", () => (person.portrait = { id: 503 }));
+    expect(p.patch).not.toHaveProperty("cover");
+    expect(p.patch.portrait).toEqual({ id: 501 });
+    expect(p.r.text).not.toMatch(/did NOT store: .*cover/);
+
+    const o = await restoreLatest("article-edit-0002", () => (org.flag = null));
+    expect(o.patch).not.toHaveProperty("flag");
+    expect(o.r.text).toMatch(
+      /Not restored: flag \(the image is no longer readable or not in the same world\)/,
+    );
   });
 
   it("restores a public element as private unless restore_public is given", async () => {

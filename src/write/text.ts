@@ -156,10 +156,11 @@ const ARTICLE_MENTION_TYPES = new Set([
   "report",
 ]);
 
-/** Registered type a mention points to ("Article" and template names → article). */
+/** Registered type a mention or tag link points to ("Article" and template names → article, [img:] → image). */
 export function mentionTargetType(type: string): string | undefined {
   const t = type.toLowerCase();
   if (ARTICLE_MENTION_TYPES.has(t)) return "article";
+  if (t === "img") return "image";
   return REGISTRY[t] ? t : undefined;
 }
 

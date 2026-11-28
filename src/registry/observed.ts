@@ -12,8 +12,8 @@
  * history (granularity 1), history.timelines and category.parent (granularity 2).
  * Second write run: their field names, listed below.
  */
-/** JSON kind of a value seen live (from the template probe). */
-export type ObservedKind = "string" | "ref" | "array" | "object";
+/** JSON kind of a value seen live (template probe, coverage probe). */
+export type ObservedKind = "string" | "number" | "boolean" | "ref" | "array" | "object";
 
 export interface TemplateObservation {
   /** Field names returned by real granularity-2 responses for this template. */
@@ -24,6 +24,10 @@ export interface TemplateObservation {
 
 export interface Observation {
   fields: readonly string[];
+  /** JSON kind seen when a value existed (coverage probe); confirms the registry kind. */
+  kinds?: Readonly<Record<string, ObservedKind>>;
+  /** Verbs whose routes answered as expected in a live run. */
+  verbs?: readonly import("./types.js").Verb[];
   /** World link confirmed at its registered granularity. */
   worldLink?: boolean;
   /** Parent-chain fields confirmed at their registered granularity. */

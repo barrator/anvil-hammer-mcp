@@ -17,6 +17,13 @@ export interface ToolContext {
   maxResponseChars: number;
   /** Technical log hook (hosted mode): one record per tool call, never content. */
   onToolCall?: (r: ToolCallRecord) => void;
+  /** Tools to expose (WA_TOOLS); undefined: all of them. */
+  tools?: ReadonlySet<string>;
+}
+
+/** Is this tool exposed by the configuration? */
+export function enabled(ctx: ToolContext, name: string): boolean {
+  return !ctx.tools || ctx.tools.has(name);
 }
 
 /** What the technical log keeps of a tool call: identifiers and outcome only. */
