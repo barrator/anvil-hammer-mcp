@@ -134,7 +134,7 @@ export interface Inventory {
   mentions: {
     withTarget: number;
     bare: number;
-    /** Text before ":" in the target, when it is a plain lowercase word. */
+    /** Text before ":" in the target, exact case (e.g. "Article", "person"). */
     targetTypes: Counter;
     targetIdShape: Counter;
     otherTargetForms: number;
@@ -238,7 +238,9 @@ export function scanBbcodeField(inv: Inventory, type: string, field: string, tex
   let sawTag = false;
   let unbalanced = false;
   let sawParagraph = false;
-  for (const m of text.matchAll(TAG)) {
+  // Mentions are atomic: their [Display name] must not be read as a tag.
+  const withoutMentions = text.replace(MENTION, (m) => " ".repeat(m.length));
+  for (const m of withoutMentions.matchAll(TAG)) {
     const closing = m[1] === "/";
     const rawName = m[2]!;
     const name = rawName.toLowerCase();
@@ -347,7 +349,8 @@ export function scanBbcodeField(inv: Inventory, type: string, field: string, tex
       continue;
     }
     const target = m[3] ?? "";
-    const tm = /^([a-z]{1,30}):(.+)$/.exec(target);
+    // Type kept with its exact case: the editor writes "Article", the API may write a template name.
+    const tm = /^([A-Za-z][A-Za-z0-9_-]{0,30}):(.+)$/.exec(target);
     if (tm) {
       inv.mentions.withTarget++;
       inc(inv.mentions.targetTypes, tm[1]!);
@@ -374,7 +377,7 @@ export function scanBbcodeField(inv: Inventory, type: string, field: string, tex
   }
 
   // Markdown-significant characters in plain text
-  const plain = text.replace(TAG, "\n").replace(MENTION, " ");
+  const plain = text.replace(MENTION, " ").replace(TAG, "\n");
   const md: [string, RegExp][] = [
     ["*", /\*/g],
     ["_", /_/g],

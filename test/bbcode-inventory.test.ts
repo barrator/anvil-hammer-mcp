@@ -79,3 +79,22 @@ describe("BBCode inventory (probe analysis)", () => {
     expect(inv.tags.br!.notLowercase).toBe(1);
   });
 });
+
+describe("BBCode inventory: mentions (stage C probe fix)", () => {
+  it("recognises mentions whatever precedes them, keeps the type's case, and never counts the name as a tag", () => {
+    const inv = emptyInventory();
+    scanBbcodeField(
+      inv,
+      "article",
+      "content",
+      `[p]@[Elara](Article:${UUID}) rules.[/p]\n[p]The queen @[Elara Vane](Article:${UUID}) and @[Orin](person:${UUID}).[/p]`,
+    );
+    expect(inv.mentions).toMatchObject({
+      withTarget: 3,
+      otherTargetForms: 0,
+      targetTypes: { Article: 2, person: 1 },
+      targetIdShape: { uuid: 3 },
+    });
+    expect(inv.localOnly.unknownTagNames).toEqual({});
+  });
+});

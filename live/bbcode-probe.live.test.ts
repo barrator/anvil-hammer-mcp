@@ -14,6 +14,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { type Json, WorldAnvilClient } from "../src/api/client.js";
 import { loadSecrets } from "../src/config/secrets.js";
 import { REGISTRY } from "../src/registry/index.js";
+import { bbcodeToMarkdown, markdownToBbcode } from "../src/content/bbcode.js";
 import { knownFields } from "../src/write/fields.js";
 import {
   emptyInventory,
@@ -50,6 +51,27 @@ beforeAll(() => {
 describe("BBCode probe", () => {
   it("counts the BBCode forms stored in the test world", async () => {
     const inv = emptyInventory();
+    // Converter check on real text: BBCode → Markdown → BBCode must give the same bytes.
+    const roundTrip = {
+      identical: 0,
+      different: 0,
+      modes: {} as Counter,
+      withPlaceholders: 0,
+      shownWholeRaw: 0,
+      differentFields: {} as Counter,
+    };
+    const checkRoundTrip = (field: string, bb: string) => {
+      if (bb === "") return;
+      const v = bbcodeToMarkdown(bb);
+      roundTrip.modes[v.mode] = (roundTrip.modes[v.mode] ?? 0) + 1;
+      if (v.hasPlaceholders) roundTrip.withPlaceholders++;
+      if (v.rawFallback) roundTrip.shownWholeRaw++;
+      if (markdownToBbcode(v.markdown, v.mode) === bb) roundTrip.identical++;
+      else {
+        roundTrip.different++;
+        roundTrip.differentFields[field] = (roundTrip.differentFields[field] ?? 0) + 1;
+      }
+    };
     const elements: Counter = {};
     let reads = 0;
     let capped = false;
@@ -73,8 +95,10 @@ describe("BBCode probe", () => {
         const fields = knownFields(def, template);
         for (const [name, value] of Object.entries(el)) {
           if (typeof value !== "string") continue;
-          if (fields[name]?.bbcode) scanBbcodeField(inv, type, name, value);
-          else scanUnflaggedField(inv, name, value);
+          if (fields[name]?.bbcode) {
+            scanBbcodeField(inv, type, name, value);
+            checkRoundTrip(name, value);
+          } else scanUnflaggedField(inv, name, value);
         }
       }
     }
@@ -90,6 +114,7 @@ describe("BBCode probe", () => {
           capped,
           harnessRefused: guard.refused.length,
           inventory: shared,
+          roundTrip,
           localOnly: inv.localOnly,
         },
         null,
@@ -124,11 +149,14 @@ describe("BBCode probe", () => {
         `markdown chars in plain text: ${j(inv.markdownChars)}`,
         `typography: ${j(inv.typography)}`,
         `unflagged fields with tags: ${j(inv.unflaggedFieldsWithTags)}`,
+        `round trip BBCode → Markdown → BBCode: ${j(roundTrip)}`,
         `Full report: ${REPORT_FILE}`,
       ].join("\n"),
     );
 
     if (guard.refused.length) throw new Error(`Harness refused ${guard.refused.length} call(s).`);
+    if (roundTrip.different)
+      throw new Error(`${roundTrip.different} text field(s) did not round-trip byte for byte.`);
     expect(inv.fieldsScanned).toBeGreaterThan(0);
   });
 });
