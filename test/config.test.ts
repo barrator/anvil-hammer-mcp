@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadAccessPolicy, parseAccessConfig, topLevelKeys } from "../src/config/access.js";
-import { ConfigError, loadConfig } from "../src/config/index.js";
+import { ConfigError, defaultBackupDir, loadConfig } from "../src/config/index.js";
 import { loadSecrets } from "../src/config/secrets.js";
 
 const dir = mkdtempSync(join(tmpdir(), "ahm-config-"));
@@ -95,6 +95,31 @@ describe("access file", () => {
 
   it("treats an unset path as all read_only", () => {
     expect(loadAccessPolicy(undefined).levelFor("anything")).toBe("read_only");
+  });
+
+  it("puts backups in the user's data folder by default, never the current directory", () => {
+    const env = { WA_APP_KEY: "fake-app-key-1234", WA_AUTH_TOKEN: "fake-token-5678" };
+    expect(defaultBackupDir({}, "/home/someone")).toBe(
+      "/home/someone/.local/share/anvil-hammer-mcp/backups",
+    );
+    expect(defaultBackupDir({ XDG_DATA_HOME: "/data" }, "/home/someone")).toBe(
+      "/data/anvil-hammer-mcp/backups",
+    );
+    expect(defaultBackupDir({ XDG_DATA_HOME: "relative/path" }, "/home/someone")).toBe(
+      "/home/someone/.local/share/anvil-hammer-mcp/backups",
+    );
+    expect(loadConfig({ ...env, WA_BACKUP_DIR: "/srv/backups" }).backupDir).toBe("/srv/backups");
+    expect(loadConfig(env).backupDir.startsWith("/")).toBe(true);
+  });
+
+  it("defaults retention to 90 days and delete to off", () => {
+    const env = { WA_APP_KEY: "fake-app-key-1234", WA_AUTH_TOKEN: "fake-token-5678" };
+    const c = loadConfig(env);
+    expect(c.backupRetentionDays).toBe(90);
+    expect(c.enableDelete).toBe(false);
+    expect(loadConfig({ ...env, WA_ENABLE_DELETE: "true" }).enableDelete).toBe(true);
+    expect(() => loadConfig({ ...env, WA_ENABLE_DELETE: "yes" })).toThrow(/"true" or "false"/);
+    expect(() => loadConfig({ ...env, WA_BACKUP_RETENTION_DAYS: "0" })).toThrow(/at least 1/);
   });
 
   it("loadConfig wires everything and validates WA_MAX_RESPONSE_CHARS", () => {

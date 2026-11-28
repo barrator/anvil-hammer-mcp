@@ -14,7 +14,8 @@ export type Verb = "get" | "list" | "create" | "update" | "delete";
 export type FieldStatus = "verified" | "unverified";
 
 /** Where an unverified entry comes from. */
-export type FieldSource = "spec" | "notes";
+/** spec: official OpenAPI spec; notes: CLAUDE.md quirks; probe: field name seen by the template probe. */
+export type FieldSource = "spec" | "notes" | "probe";
 
 export type FieldKind =
   | "string"
@@ -34,8 +35,20 @@ export interface FieldDef {
   bbcode?: boolean;
   /** Required when creating the element. */
   requiredOnCreate?: boolean;
-  /** For ref/refs: the type of the linked element, when known. */
+  /**
+   * For ref/refs: the type of the linked element, when known. A registered
+   * type name (e.g. "article"), "image" (reference to an uploaded image), or
+   * "internal" (a World Anvil internal ID such as an organization type, which
+   * belongs to no world).
+   */
   refType?: string;
+  /**
+   * False when the kind is inferred from the field name or the spec and has
+   * not been confirmed by a value seen live. Absent means confirmed or not applicable.
+   */
+  kindConfirmed?: boolean;
+  /** Computed by World Anvil; never sent on create, update or restore. */
+  writable?: false;
   note?: string;
 }
 
@@ -65,6 +78,11 @@ export interface ListRoute {
 
 export interface TemplateDef {
   description: string;
+  /**
+   * True once the template probe has listed this template's fields from real
+   * responses. Probed templates reject unknown fields; others accept them with a warning.
+   */
+  probed: boolean;
   fields: Record<string, FieldDef>;
   quirks?: string[];
 }
@@ -77,6 +95,8 @@ export interface TypeDef {
   /** Granularity values accepted by GET, from the spec. */
   granularities: string[];
   defaultGranularity: string;
+  /** Granularity used for backups and read-back: the most complete one. */
+  backupGranularity: string;
   list?: ListRoute;
   /** Verbs the API supports for this type. */
   verbs: Verb[];

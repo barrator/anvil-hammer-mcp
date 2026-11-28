@@ -82,6 +82,12 @@ export class Ledger {
     return this.entries.some((e) => e.id === id);
   }
 
+  /** Forget an element once it has been deleted. */
+  remove(id: string): void {
+    this.entries = this.entries.filter((e) => e.id !== id);
+    writeFileSync(this.file, JSON.stringify(this.entries, null, 2) + "\n");
+  }
+
   get all(): readonly LedgerEntry[] {
     return this.entries;
   }
@@ -97,9 +103,31 @@ const WORLD_LISTS = /^world\/[a-z_]+$/;
 
 export interface GuardOptions {
   testWorldId: string;
-  ledger: Pick<Ledger, "has">;
-  /** Stage A: true. Writes are refused outright. */
+  /** In write mode the guard records created elements and forgets deleted ones. */
+  ledger: Pick<Ledger, "has"> & Partial<Pick<Ledger, "record" | "remove">>;
+  /** Read-only runs refuse every write outright. */
   readOnly: boolean;
+}
+
+/** Ids referenced in a request body: {id} values and [{id}] lists, at the top level. */
+function referencedIds(body: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  const take = (v: unknown) => {
+    if (
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof (v as { id?: unknown }).id === "string"
+    ) {
+      ids.push((v as { id: string }).id);
+    }
+  };
+  for (const [k, v] of Object.entries(body)) {
+    if (k === "world") continue;
+    if (Array.isArray(v)) v.forEach(take);
+    else take(v);
+  }
+  return ids;
 }
 
 /**
@@ -125,6 +153,7 @@ export function createGuardedFetch(inner: typeof fetch, opts: GuardOptions) {
     const isTestWorld = id === opts.testWorldId;
 
     let collectIds = false;
+    let pendingCreate: { type: string; title: string } | undefined;
     if (method === "GET" && (path === "identity" || path === UNKNOWN_ROUTE_PROBE)) {
       // No world involved.
     } else if (method === "POST" && path === "user/worlds") {
@@ -150,12 +179,33 @@ export function createGuardedFetch(inner: typeof fetch, opts: GuardOptions) {
           refuse(`created elements must be titled ${TEST_PREFIX}…`);
         if (world !== undefined && world !== opts.testWorldId)
           refuse("creating outside the test world");
+        // A create must PROVE it targets the test world: the world itself, or a
+        // parent (article of a secret, timeline of an event, parent category…)
+        // that is in the ledger or was discovered in the test world.
+        if (world === undefined) {
+          const known = referencedIds(body).some((x) => discovered.has(x) || opts.ledger.has(x));
+          if (!known) refuse("a create must name the test world or a parent known to be in it");
+        }
+        pendingCreate = { type: path, title };
       }
     } else {
       refuse(`${method} /${path} is not an allowed live-test call`);
     }
 
     const res = await inner(input, init);
+    if (pendingCreate && res.ok) {
+      try {
+        const created = (await res.clone().json()) as { id?: unknown };
+        const newId = typeof created.id === "number" ? String(created.id) : created.id;
+        if (typeof newId === "string") {
+          opts.ledger.record?.(pendingCreate.type, newId, pendingCreate.title);
+          discovered.add(newId);
+        }
+      } catch {
+        // No id in the response: nothing to record.
+      }
+    }
+    if (method === "DELETE" && res.ok && id) opts.ledger.remove?.(id);
     if (collectIds && res.ok) {
       const copy = res.clone();
       try {

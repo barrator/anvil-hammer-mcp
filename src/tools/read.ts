@@ -37,7 +37,7 @@ function rememberAll(state: SessionState, type: string, items: Json[], worldId?:
   for (const it of items) {
     const id = typeof it.id === "string" ? it.id : undefined;
     if (!id) continue;
-    state.rememberUpdateDate(type, id, it.updateDate);
+    state.rememberRead(type, id, it);
     if (worldId) state.worlds.set(`${type}:${id}`, worldId);
   }
 }
@@ -134,8 +134,8 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
           templates: t.templates ? Object.keys(t.templates) : undefined,
         }));
         const note =
-          "This version of the server is read-only: only get and list are available as tools, " +
-          "whatever verbs World Anvil supports.";
+          "Worlds can be read and updated but not created or deleted through this server. " +
+          "Delete is available only when the server configuration enables it.";
         return textResult(ctx, [serverLine(note), JSON.stringify(types, null, 2)].join("\n"));
       }
       const t = getType(type);
@@ -211,7 +211,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
         assertWorldReadable(ctx, world, type, id);
       }
 
-      state.rememberUpdateDate(type, id, element.updateDate);
+      state.rememberRead(type, id, element);
       return renderElement(
         ctx,
         `${type} "${id}", granularity ${g}.`,

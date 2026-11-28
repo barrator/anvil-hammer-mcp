@@ -38,17 +38,74 @@ describe("registry", () => {
     expect(verified.sort()).toEqual(observed.sort());
   });
 
-  it("keeps types never seen live entirely unverified", () => {
-    for (const name of ["subscribergroup", "timeline", "history"]) {
-      const t = REGISTRY[name]!;
-      expect(
-        Object.values(t.fields).every((f) => f.status === "unverified"),
-        name,
-      ).toBe(true);
-      expect(t.world?.status).toBe("unverified");
-      expect(t.parents.every((p) => p.status === "unverified")).toBe(true);
+  it("keeps exactly the fields not observed in the stage B write run unverified", () => {
+    const unverified = (name: string) =>
+      Object.entries(REGISTRY[name]!.fields)
+        .filter(([, f]) => f.status !== "verified")
+        .map(([k]) => k)
+        .sort();
+    expect(unverified("subscribergroup")).toEqual([]);
+    expect(unverified("timeline")).toEqual(["eras"]);
+    expect(unverified("history")).toEqual(["characters", "organizations"]);
+    expect(unverified("category")).toEqual([]);
+  });
+
+  it("knows the history fields wa_upsert_timeline_event will need, as links where they link", () => {
+    const f = REGISTRY.history!.fields;
+    for (const k of ["hour", "minute", "endingHour", "endingMinute"]) expect(f[k], k).toBeDefined();
+    for (const k of ["location", "species", "report", "militaryConflict"]) {
+      expect(f[k], k).toMatchObject({ kind: "ref", refType: "article", kindConfirmed: false });
     }
-    expect(REGISTRY.category!.parents.find((p) => p.field === "parent")?.status).toBe("unverified");
+  });
+
+  it("records the links observed in the stage B write run", () => {
+    for (const name of ["subscribergroup", "timeline", "history"]) {
+      expect(REGISTRY[name]!.world, name).toMatchObject({ granularity: "1", status: "verified" });
+    }
+    expect(REGISTRY.history!.parents[0]).toMatchObject({
+      field: "timelines",
+      granularity: "2",
+      status: "verified",
+    });
+    expect(REGISTRY.category!.parents[0]).toMatchObject({
+      field: "parent",
+      granularity: "2",
+      status: "verified",
+    });
+  });
+
+  it("has no draft or visibility fields where World Anvil has none", () => {
+    for (const name of ["timeline", "history", "category"])
+      expect(REGISTRY[name]!.fields, name).not.toHaveProperty("isDraft");
+    expect(REGISTRY.subscribergroup!.fields).not.toHaveProperty("state");
+    expect(REGISTRY.subscribergroup!.fields).not.toHaveProperty("isDraft");
+  });
+
+  it("marks every probed template field verified, with kinds confirmed only where a value was seen", () => {
+    const templates = REGISTRY.article!.templates!;
+    const probe = LIVE_OBSERVED.article!.templates!;
+    for (const name of ["person", "organization", "settlement", "rank"]) {
+      const t = templates[name]!;
+      expect(t.probed, name).toBe(true);
+      expect(Object.keys(t.fields).sort(), name).toEqual([...probe[name]!.fields].sort());
+      for (const [f, d] of Object.entries(t.fields)) {
+        expect(d.status, `${name}.${f}`).toBe("verified");
+        expect(d.kindConfirmed, `${name}.${f}`).toBe(f in probe[name]!.kinds ? true : false);
+      }
+    }
+    expect(Object.keys(templates.person!.fields)).toHaveLength(123);
+    expect(templates.person!.fields.organization).toMatchObject({
+      kind: "ref",
+      refType: "article",
+      kindConfirmed: true,
+    });
+    expect(templates.person!.fields.portrait).toMatchObject({
+      kind: "ref",
+      refType: "image",
+      kindConfirmed: true,
+    });
+    expect(templates.organization!.fields.type).toMatchObject({ refType: "internal" });
+    expect(templates.location!.probed).toBe(false);
   });
 
   it("records the world links observed live at their granularity", () => {
@@ -71,7 +128,7 @@ describe("registry", () => {
   it("wa_describe lists types and details one type and one template", async () => {
     const { call } = await connect();
     const all = await call("wa_describe");
-    expect(all.text).toMatch(/read-only/);
+    expect(all.text).toMatch(/not created or deleted/);
     expect(all.text).toContain('"type": "history"');
     const cat = await call("wa_describe", { type: "category" });
     expect(cat.text).toContain("parentCategory");

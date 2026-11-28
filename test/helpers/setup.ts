@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { parseAccessConfig } from "../../src/config/access.js";
@@ -15,6 +18,7 @@ import {
 export const ACCESS_JSON = JSON.stringify({
   "world-blocked-0002": "blocked",
   "world-edit-0003": "edit_only",
+  "world-full-0004": "full_edit",
 });
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
@@ -22,18 +26,30 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     secrets: { appKey: FAKE_APP_KEY, authToken: FAKE_TOKEN },
     access: parseAccessConfig(ACCESS_JSON),
     maxResponseChars: 25_000,
+    backupDir: mkdtempSync(join(tmpdir(), "ahm-backups-")),
+    backupRetentionDays: 90,
+    enableDelete: false,
     ...overrides,
   };
 }
 
 export async function connect(
-  opts: { config?: Partial<Config>; fake?: FakeOptions; data?: ReturnType<typeof seedData> } = {},
+  opts: {
+    config?: Partial<Config>;
+    fake?: FakeOptions;
+    data?: ReturnType<typeof seedData>;
+    /** Share one fake World Anvil between two servers (two MCP sessions). */
+    shared?: ReturnType<typeof createFakeWorldAnvil>;
+    now?: () => Date;
+  } = {},
 ) {
-  const fake = createFakeWorldAnvil(opts.data ?? seedData(), opts.fake);
+  const fake = opts.shared ?? createFakeWorldAnvil(opts.data ?? seedData(), opts.fake);
   const sessions = new SessionStore();
-  const server = createServer(testConfig(opts.config), {
+  const config = testConfig(opts.config);
+  const server = createServer(config, {
     clientOptions: { fetch: fake.fetch, minIntervalMs: 0, backoffBaseMs: 1, backoffMaxMs: 5 },
     sessions,
+    now: opts.now,
   });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0" });
@@ -43,7 +59,7 @@ export async function connect(
     const content = r.content as { type: string; text: string }[];
     return { isError: r.isError === true, text: content.map((c) => c.text).join("\n") };
   };
-  return { client, call, fake, sessions };
+  return { client, call, fake, sessions, config };
 }
 
 /** Parse the JSON inside the first untrusted block. */

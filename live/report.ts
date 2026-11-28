@@ -30,8 +30,39 @@ export class LiveReport {
   readonly types: Record<string, TypeObservation> = {};
   readonly quirks: Record<string, unknown> = {};
 
+  /** IDs (test world, created elements) to mask in details, on top of any UUID. */
+  private readonly hidden = new Set<string>();
+
+  hide(...ids: string[]): void {
+    for (const id of ids) if (id) this.hidden.add(id);
+  }
+
+  /** Details may quote server messages: never let an ID or a UUID through. */
+  private sanitize(text: string): string {
+    let out = text.replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+      "<id>",
+    );
+    for (const id of this.hidden) out = out.split(id).join("<id>");
+    return out.replace(/\s+/g, " ").slice(0, 300);
+  }
+
   check(name: string, ok: boolean, detail?: string): void {
-    this.checks.push({ name, ok, ...(detail ? { detail } : {}) });
+    this.checks.push({ name, ok, ...(detail ? { detail: this.sanitize(detail) } : {}) });
+  }
+
+  get failed(): Check[] {
+    return this.checks.filter((c) => !c.ok);
+  }
+
+  /** Make the run fail when any check failed, including checks made in afterAll. */
+  assertAllPassed(): void {
+    const failed = this.failed;
+    if (failed.length) {
+      throw new Error(
+        `${failed.length} live check(s) failed: ${failed.map((c) => c.name).join("; ")}`,
+      );
+    }
   }
 
   type(name: string): TypeObservation {
