@@ -8,6 +8,11 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # typescript-eslint does not support TypeScript 7 yet (peer typescript <6.1.0).
+      # Remove this entry once it accepts TypeScript 7.
+      - dependency-name: typescript
+        versions: [">=7.0.0"]
     open-pull-requests-limit: 5
 
   # Base images in the Dockerfile (pinned by digest).
