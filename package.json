@@ -23,7 +23,8 @@
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:live": "vitest run --config vitest.live.config.ts"
+    "test:live": "vitest run --config vitest.live.config.ts live/read.live.test.ts",
+    "test:live:templates": "vitest run --config vitest.live.config.ts live/template-probe.live.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

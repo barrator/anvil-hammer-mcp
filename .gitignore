@@ -16,6 +16,7 @@ access.*.json
 live-test.config.json
 live-test.ledger.json
 live-test-report.json
+live-template-report.json
 
 # Local data folders (backups, index, logs)
 data/
