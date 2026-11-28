@@ -1,6 +1,6 @@
 {
   "name": "anvil-hammer-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A safe MCP server for reading and enriching your own World Anvil worlds.",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,10 @@
     "test:live:write": "vitest run --config vitest.live.config.ts live/write.live.test.ts",
     "test:live:cleanup": "vitest run --config vitest.live.config.ts live/cleanup.live.test.ts",
     "test:live:bbcode": "vitest run --config vitest.live.config.ts live/bbcode-probe.live.test.ts",
-    "test:live:content": "vitest run --config vitest.live.config.ts live/content.live.test.ts"
+    "test:live:content": "vitest run --config vitest.live.config.ts live/content.live.test.ts",
+    "test:live:coverage": "vitest run --config vitest.live.config.ts live/coverage.live.test.ts",
+    "test:live:timeline": "vitest run --config vitest.live.config.ts live/timeline.live.test.ts",
+    "test:live:types": "vitest run --config vitest.live.config.ts live/types.live.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

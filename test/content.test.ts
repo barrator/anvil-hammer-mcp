@@ -219,7 +219,7 @@ describe("mentions", () => {
     const r = await call("wa_create_article", {
       world_id: EDIT_WORLD,
       title: "X",
-      fields: { content: "@[Carte](map:map-0001)" },
+      fields: { content: "@[Gizmo](gizmo:gizmo-0001)" },
     });
     expect(r.text).toMatch(/cannot be checked against the world \(unknown type\)/);
   });
@@ -349,14 +349,30 @@ describe("element links written as tags", () => {
     );
   });
 
-  it("refuses a new image embed it cannot check, but keeps existing ones", async () => {
-    const { call } = await connect({ data: withContent("[p]a[/p]\n[img:123|none]") });
-    const created = await call("wa_create_article", {
+  it("accepts a new image embed only for an image read in the same world, and keeps existing ones", async () => {
+    const { call, fake } = await connect({ data: withContent("[p]a[/p]\n[img:123|none]") });
+    const missing = await call("wa_create_article", {
       world_id: EDIT_WORLD,
       title: "X",
       fields: { content: "⟦[img:456|none]⟧" },
     });
-    expect(created.text).toMatch(/cannot be checked against the world \(unknown type\)/);
+    expect(missing.text).toMatch(/not in the same world \(or not accessible\)/);
+    const elsewhere = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      fields: { content: "⟦[img:503|none]⟧" },
+    });
+    expect(elsewhere.text).toMatch(/not in the same world/);
+    expect(fake.calls.filter((c) => c.method === "PUT")).toHaveLength(0);
+    const same = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      fields: { content: "⟦[img:501|none]⟧" },
+    });
+    expect(same.isError, same.text).toBe(false);
+    expect(
+      fake.calls.some((c) => c.method === "GET" && c.path === "image" && c.query.id === "501"),
+    ).toBe(true);
     await call("wa_get", { type: "article", id: "article-edit-0001" });
     const kept = await call("wa_update_article", {
       id: "article-edit-0001",

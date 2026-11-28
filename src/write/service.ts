@@ -7,7 +7,7 @@
 import { type Json, WorldAnvilApiError } from "../api/client.js";
 import type { AccessLevel } from "../config/access.js";
 import { RESPONSE_FLAGS } from "../output/compact.js";
-import { getType } from "../registry/index.js";
+import { REGISTRY, getType, scopeOf } from "../registry/index.js";
 import type { TypeDef } from "../registry/types.js";
 import { refId } from "../resolver.js";
 import { type SessionState, normalizeUpdateDate } from "../session.js";
@@ -81,6 +81,56 @@ function assertCanWrite(
   }
 }
 
+/** Refuse writes to types this server keeps read-only, with the reason. */
+function assertWritableType(def: TypeDef, verb: "create" | "update" | "delete") {
+  const scope = scopeOf(def);
+  if (scope === "account")
+    throw new ToolError(
+      `Refused: ${def.name} is data of your account, not of a world; this server keeps it read-only.`,
+    );
+  if (scope === "catalog")
+    throw new ToolError(`Refused: ${def.name} is a shared World Anvil list; it is read-only here.`);
+  if (def.verbs.length === 0)
+    throw new ToolError(
+      `Refused: World Anvil has no route for ${def.name}; it can only be read inside its parent.`,
+    );
+  if (!def.verbs.includes(verb))
+    throw new ToolError(
+      verb === "create" && def.name === "image"
+        ? "Refused: images cannot be created through the API (no upload); upload them on the site."
+        : `Refused: ${def.name} cannot be ${verb === "create" ? "created" : verb === "update" ? "updated" : "deleted"}.`,
+    );
+}
+
+/**
+ * An account or catalog element linked from a write (a block's template, a
+ * marker's type): it must be readable, and if it names a world, that world.
+ */
+async function checkSharedReference(
+  ctx: WriteContext,
+  field: string,
+  type: string,
+  id: string,
+  worldId: string,
+) {
+  const def = getType(type);
+  let el: Json | undefined;
+  try {
+    el = await ctx.client.request<Json>("GET", def.path, {
+      id,
+      granularity: def.defaultGranularity,
+    });
+  } catch (err) {
+    if (!(err instanceof WorldAnvilApiError && err.kind === "not_found")) throw err;
+  }
+  const named = el ? refId(el.world) : undefined;
+  if (!el || (named !== undefined && named !== worldId)) {
+    throw new ToolError(
+      `Refused: field "${field}" links to ${type} "${id}", which is not readable (or belongs to another world). Nothing was sent.`,
+    );
+  }
+}
+
 async function readCurrent(ctx: WriteContext, def: TypeDef, id: string): Promise<Json | undefined> {
   try {
     return await ctx.client.request<Json>("GET", def.path, {
@@ -142,6 +192,11 @@ async function checkReferences(
       throw new ToolError(
         `Refused: field "${ref.field}" links to "${ref.id}", but ${ref.unsupported}. Nothing was sent.`,
       );
+    }
+    const target = ref.type ? REGISTRY[ref.type] : undefined;
+    if (target && scopeOf(target) !== "world") {
+      await checkSharedReference(ctx, ref.field, target.name, ref.id, worldId);
+      continue;
     }
     const w = ref.type ? await ctx.resolver.resolve(state, ref.type, ref.id) : undefined;
     if (w !== worldId) {
@@ -287,7 +342,7 @@ export async function createElement(
   const def = getType(input.type);
   if (def.name === "world")
     throw new ToolError("Refused: worlds cannot be created through this server.");
-  if (!def.verbs.includes("create")) throw new ToolError(`Refused: ${def.name} cannot be created.`);
+  assertWritableType(def, "create");
 
   const template =
     typeof input.body.templateType === "string" ? input.body.templateType : undefined;
@@ -368,6 +423,8 @@ export interface UpdateInput {
   linkFields?: string[];
   /** Text fields: format, append, replace confirmation. Default: raw BBCode, no append. */
   text?: Omit<TextOptions, "isRestore">;
+  /** Extra fields computed from the current element, run after the access check. */
+  prepare?: (current: Json) => Json;
 }
 
 export async function updateElement(
@@ -376,13 +433,15 @@ export async function updateElement(
   input: UpdateInput,
 ): Promise<WriteOutcome> {
   const def = getType(input.type);
-  if (!def.verbs.includes("update")) throw new ToolError(`Refused: ${def.name} cannot be updated.`);
+  assertWritableType(def, "update");
 
   const current = await readCurrent(ctx, def, input.id);
   if (!current) throw notFound(def.name, input.id);
   const worldId =
     def.name === "world" ? input.id : await worldOf(ctx, state, def, input.id, current);
   assertCanWrite(ctx, worldId, def.name, input.id, "write");
+  // Fields computed from the current element (e.g. an event's lane), only once access is checked.
+  if (input.prepare) input = { ...input, body: { ...input.body, ...input.prepare(current) } };
 
   const template = typeof current.templateType === "string" ? current.templateType : undefined;
   checkLinkFields(def, template, input.linkFields);
@@ -469,7 +528,7 @@ export async function deleteElement(
     throw new ToolError("Refused: delete is disabled in this server's configuration.");
   if (def.name === "world")
     throw new ToolError("Refused: worlds cannot be deleted through this server.");
-  if (!def.verbs.includes("delete")) throw new ToolError(`Refused: ${def.name} cannot be deleted.`);
+  assertWritableType(def, "delete");
 
   const current = await readCurrent(ctx, def, input.id);
   if (!current) throw notFound(def.name, input.id);
@@ -537,19 +596,28 @@ export async function restoreElement(
       );
     }
   };
-  const noteImages = (images: string[]) => {
-    if (images.length) {
+  /** An image reference is restored only if the image is readable and in the same world. */
+  const checkImages = async (body: Json, images: string[]): Promise<Json> => {
+    const dropped: string[] = [];
+    for (const field of images) {
+      const id = refId(body[field]);
+      const w = id ? await ctx.resolver.resolve(state, "image", id) : undefined;
+      if (w !== backup.worldId) dropped.push(field);
+    }
+    if (dropped.length) {
       notes.push(
-        `Image references are not restored (they cannot be checked yet): ${images.join(", ")}.`,
+        `Not restored: ${dropped.join(", ")} (the image is no longer readable or not in the same world).`,
       );
     }
+    return Object.fromEntries(Object.entries(body).filter(([k]) => !dropped.includes(k)));
   };
 
   const current = await readCurrent(ctx, def, input.id);
   if (current) {
-    const { body, skipped, images } = restoreBody(def, backup.element, current);
-    keepPrivate(body, current.state === "public");
-    noteImages(images);
+    const restored = restoreBody(def, backup.element, current);
+    const { skipped } = restored;
+    keepPrivate(restored.body, current.state === "public");
+    const body = await checkImages(restored.body, restored.images);
     if (Object.keys(body).length === 0) {
       throw new ToolError(
         `Nothing to restore: ${def.name} "${input.id}" already matches backup "${input.backupId}".`,
@@ -572,9 +640,10 @@ export async function restoreElement(
   }
 
   // The element no longer exists: recreate it. World Anvil gives it a new ID.
-  const { body, skipped, images } = restoreBody(def, backup.element, undefined);
-  keepPrivate(body, false);
-  noteImages(images);
+  const restored = restoreBody(def, backup.element, undefined);
+  const { skipped } = restored;
+  keepPrivate(restored.body, false);
+  const body = await checkImages(restored.body, restored.images);
   body.world = { id: backup.worldId };
   if (def.name === "article" && typeof backup.element.templateType === "string") {
     body.templateType = backup.element.templateType;

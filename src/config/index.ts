@@ -4,6 +4,7 @@ import { DEFAULT_MAX_RESPONSE_CHARS, SERVER_NAME } from "../constants.js";
 import { type AccessPolicy, loadAccessPolicy } from "./access.js";
 import { ConfigError } from "./errors.js";
 import { loadSecrets, type Secrets } from "./secrets.js";
+import { ALL_TOOLS, ESSENTIAL_TOOLS } from "../tools/names.js";
 
 export interface Config {
   secrets: Secrets;
@@ -14,6 +15,8 @@ export interface Config {
   backupRetentionDays: number;
   /** Expose wa_delete. Off by default. */
   enableDelete: boolean;
+  /** Tools to expose (WA_TOOLS); undefined: every tool ("full", the default). */
+  tools?: ReadonlySet<string>;
 }
 
 type Env = Record<string, string | undefined>;
@@ -47,6 +50,30 @@ export function defaultBackupDir(env: Env, home = homedir()): string {
   return join(base, SERVER_NAME, "backups");
 }
 
+/** WA_TOOLS: "full" (default), "essential", or a comma-separated list of tool names. */
+export function parseTools(
+  raw: string | undefined,
+  enableDelete: boolean,
+): ReadonlySet<string> | undefined {
+  const v = raw?.trim();
+  if (!v || v === "full") return undefined;
+  if (v === "essential") return new Set(ESSENTIAL_TOOLS);
+  const names = v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const known: readonly string[] = ALL_TOOLS;
+  const unknown = names.filter((n) => !known.includes(n));
+  if (unknown.length)
+    throw new ConfigError(
+      `WA_TOOLS: unknown tool(s) ${unknown.join(", ")}. Use "essential", "full" or names among: ${known.join(", ")}.`,
+    );
+  if (names.includes("wa_delete") && !enableDelete)
+    throw new ConfigError("WA_TOOLS lists wa_delete, but WA_ENABLE_DELETE is not true.");
+  if (names.length === 0) throw new ConfigError("WA_TOOLS lists no tool.");
+  return new Set(names);
+}
+
 export function loadConfig(env: Env = process.env, o: { filesOnly?: boolean } = {}): Config {
   const secrets = loadSecrets(env, o);
   const access = loadAccessPolicy(env.WA_ACCESS_FILE);
@@ -58,6 +85,7 @@ export function loadConfig(env: Env = process.env, o: { filesOnly?: boolean } = 
     backupDir: explicitDir ? resolve(explicitDir) : defaultBackupDir(env),
     backupRetentionDays: intVar(env, "WA_BACKUP_RETENTION_DAYS", 1, DEFAULT_BACKUP_RETENTION_DAYS),
     enableDelete: boolVar(env, "WA_ENABLE_DELETE"),
+    tools: parseTools(env.WA_TOOLS, boolVar(env, "WA_ENABLE_DELETE")),
   };
 }
 

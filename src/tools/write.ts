@@ -13,41 +13,41 @@ import {
   restoreElement,
   updateElement,
 } from "../write/service.js";
-import { ToolError, handler, serverLine, textResult } from "./context.js";
+import { ToolError, enabled, handler, serverLine, textResult } from "./context.js";
 
-const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: true } as const;
+export const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: true } as const;
 const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, openWorldHint: true } as const;
 
 const writableTypes = TYPE_NAMES;
-const id = (what: string) => z.string().trim().min(1).max(100).describe(`The ${what} ID.`);
+export const id = (what: string) => z.string().trim().min(1).max(100).describe(`The ${what} ID.`);
 const data = z
   .record(z.string(), z.unknown())
   .describe('Fields to send. Link other elements as {"id": "..."} objects.');
-const dryRun = z
+export const dryRun = z
   .boolean()
   .default(false)
   .describe("Show exactly what would be sent, without writing.");
-const expected = z
+export const expected = z
   .string()
   .trim()
   .min(1)
   .optional()
   .describe("The updateDate you expect the element to have; the write is refused if it differs.");
-const rawBbcode = z
+export const rawBbcode = z
   .boolean()
   .default(false)
   .describe("Text fields are given as raw World Anvil BBCode instead of Markdown.");
-const replaceFields = z
+export const replaceFields = z
   .array(z.string().min(1))
   .max(50)
   .optional()
   .describe(
     "Text fields whose whole existing text you really mean to replace. Without it, replacing a non-empty text field is refused; prefer append.",
   );
-const TEXT_NOTE =
+export const TEXT_NOTE =
   " Text fields take Markdown (paragraphs separated by a blank line, **bold**, *italic*, # headings, " +
   "mentions as @[Title](Article:id)); keep any ⟦…⟧ exactly as read. Replacing a non-empty text field needs replace_fields.";
-const textOptions = (raw: boolean, replace?: string[], append?: Record<string, string>) => ({
+export const textOptions = (raw: boolean, replace?: string[], append?: Record<string, string>) => ({
   textFormat: raw ? ("bbcode" as const) : ("markdown" as const),
   replaceFields: replace,
   append,
@@ -61,11 +61,11 @@ const links = z
     'Links to other elements of the same world by ID, e.g. {"organization": "<id>"} or {"organizations": ["<id>", "<id>"]}.',
   );
 
-const CONFLICT_NOTE =
+export const CONFLICT_NOTE =
   " The element must have been read in this session (wa_get or a list); the write is refused if someone changed it since.";
 
 /** Turn `links` into {"field": {"id"}} / [{"id"}]. Field kinds are checked by the write service, after access checks. */
-function linkFields(input: Record<string, string | string[]> | undefined): Json {
+export function linkFields(input: Record<string, string | string[]> | undefined): Json {
   if (!input) return {};
   const out: Json = {};
   for (const [field, value] of Object.entries(input)) {
@@ -74,7 +74,7 @@ function linkFields(input: Record<string, string | string[]> | undefined): Json 
   return out;
 }
 
-function render(ctx: WriteContext, o: WriteOutcome): ReturnType<typeof textResult> {
+export function render(ctx: WriteContext, o: WriteOutcome): ReturnType<typeof textResult> {
   const lines: string[] = [];
   const what = `${o.type}${o.id ? ` "${o.id}"` : ""}`;
   if (o.action === "dry_run") {
@@ -130,72 +130,74 @@ function render(ctx: WriteContext, o: WriteOutcome): ReturnType<typeof textResul
 }
 
 export function registerWriteTools(server: McpServer, ctx: WriteContext) {
-  server.registerTool(
-    "wa_create",
-    {
-      title: "Create an element",
-      description:
-        "Create any registered element type (except worlds). New elements are private and draft by default; " +
-        'pass "state": "public" only when the user explicitly asks. Referenced elements must be in the same world. ' +
-        "Fields unknown to the registry are sent with a warning; the result lists fields World Anvil ignored." +
-        TEXT_NOTE,
-      inputSchema: { type: z.enum(writableTypes), data, raw_bbcode: rawBbcode, dry_run: dryRun },
-      annotations: WRITE,
-    },
-    handler(ctx, "wa_create", async ({ type, data, raw_bbcode, dry_run }, state) =>
-      render(
-        ctx,
-        await createElement(ctx, state, {
-          type,
-          body: data,
-          strictTemplates: false,
-          dryRun: dry_run,
-          text: textOptions(raw_bbcode),
-        }),
-      ),
-    ),
-  );
-
-  server.registerTool(
-    "wa_update",
-    {
-      title: "Update an element",
-      description:
-        "Update only the given fields of an element. A full backup is saved first and the result is read back." +
-        CONFLICT_NOTE +
-        TEXT_NOTE,
-      inputSchema: {
-        type: z.enum(writableTypes),
-        id: id("element"),
-        data,
-        raw_bbcode: rawBbcode,
-        replace_fields: replaceFields,
-        expected_update_date: expected,
-        dry_run: dryRun,
+  if (enabled(ctx, "wa_create"))
+    server.registerTool(
+      "wa_create",
+      {
+        title: "Create an element",
+        description:
+          "Create any registered element type (except worlds). New elements are private and draft by default; " +
+          'pass "state": "public" only when the user explicitly asks. Referenced elements must be in the same world. ' +
+          "Fields unknown to the registry are sent with a warning; the result lists fields World Anvil ignored." +
+          TEXT_NOTE,
+        inputSchema: { type: z.enum(writableTypes), data, raw_bbcode: rawBbcode, dry_run: dryRun },
+        annotations: WRITE,
       },
-      annotations: WRITE,
-    },
-    handler(
-      ctx,
-      "wa_update",
-      async (
-        { type, id, data, raw_bbcode, replace_fields, expected_update_date, dry_run },
-        state,
-      ) =>
+      handler(ctx, "wa_create", async ({ type, data, raw_bbcode, dry_run }, state) =>
         render(
           ctx,
-          await updateElement(ctx, state, {
+          await createElement(ctx, state, {
             type,
-            id,
             body: data,
             strictTemplates: false,
             dryRun: dry_run,
-            expectedUpdateDate: expected_update_date,
-            text: textOptions(raw_bbcode, replace_fields),
+            text: textOptions(raw_bbcode),
           }),
         ),
-    ),
-  );
+      ),
+    );
+
+  if (enabled(ctx, "wa_update"))
+    server.registerTool(
+      "wa_update",
+      {
+        title: "Update an element",
+        description:
+          "Update only the given fields of an element. A full backup is saved first and the result is read back." +
+          CONFLICT_NOTE +
+          TEXT_NOTE,
+        inputSchema: {
+          type: z.enum(writableTypes),
+          id: id("element"),
+          data,
+          raw_bbcode: rawBbcode,
+          replace_fields: replaceFields,
+          expected_update_date: expected,
+          dry_run: dryRun,
+        },
+        annotations: WRITE,
+      },
+      handler(
+        ctx,
+        "wa_update",
+        async (
+          { type, id, data, raw_bbcode, replace_fields, expected_update_date, dry_run },
+          state,
+        ) =>
+          render(
+            ctx,
+            await updateElement(ctx, state, {
+              type,
+              id,
+              body: data,
+              strictTemplates: false,
+              dryRun: dry_run,
+              expectedUpdateDate: expected_update_date,
+              text: textOptions(raw_bbcode, replace_fields),
+            }),
+          ),
+      ),
+    );
 
   const articleFields = z
     .record(z.string(), z.unknown())
@@ -204,201 +206,205 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       "Article and template fields. Text fields in Markdown (or BBCode with raw_bbcode). Unknown fields of a probed template are refused; see wa_describe.",
     );
 
-  server.registerTool(
-    "wa_create_article",
-    {
-      title: "Create an article",
-      description:
-        "Create an article of a template (person, organization, settlement, rank, location, article…). " +
-        "Private and draft by default; public only if the user explicitly asks. For probed templates, unknown " +
-        "fields are refused before anything is sent; other templates accept them with a warning." +
-        TEXT_NOTE,
-      inputSchema: {
-        world_id: id("world"),
-        title: z.string().trim().min(1).max(300),
-        template: z.string().trim().min(1).default("article"),
-        fields: articleFields,
-        links,
-        category_id: z.string().trim().min(1).optional(),
-        state: z.enum(["private", "public"]).optional(),
-        is_draft: z.boolean().optional(),
-        raw_bbcode: rawBbcode,
-        dry_run: dryRun,
+  if (enabled(ctx, "wa_create_article"))
+    server.registerTool(
+      "wa_create_article",
+      {
+        title: "Create an article",
+        description:
+          "Create an article of a template (person, organization, settlement, rank, location, article…). " +
+          "Private and draft by default; public only if the user explicitly asks. For probed templates, unknown " +
+          "fields are refused before anything is sent; other templates accept them with a warning." +
+          TEXT_NOTE,
+        inputSchema: {
+          world_id: id("world"),
+          title: z.string().trim().min(1).max(300),
+          template: z.string().trim().min(1).default("article"),
+          fields: articleFields,
+          links,
+          category_id: z.string().trim().min(1).optional(),
+          state: z.enum(["private", "public"]).optional(),
+          is_draft: z.boolean().optional(),
+          raw_bbcode: rawBbcode,
+          dry_run: dryRun,
+        },
+        annotations: WRITE,
       },
-      annotations: WRITE,
-    },
-    handler(ctx, "wa_create_article", async (a, state) => {
-      const template = a.template.toLowerCase();
-      const body: Json = {
-        ...(a.fields ?? {}),
-        ...linkFields(a.links),
-        title: a.title,
-        templateType: template,
-        world: { id: a.world_id },
-      };
-      if (a.category_id) body.category = { id: a.category_id };
-      if (a.state) body.state = a.state;
-      if (a.is_draft !== undefined) body.isDraft = a.is_draft;
-      return render(
-        ctx,
-        await createElement(ctx, state, {
-          type: "article",
-          body,
-          strictTemplates: true,
-          dryRun: a.dry_run,
-          linkFields: Object.keys(a.links ?? {}),
-          text: textOptions(a.raw_bbcode),
-        }),
-      );
-    }),
-  );
-
-  server.registerTool(
-    "wa_update_article",
-    {
-      title: "Update an article",
-      description:
-        "Update only the given fields of an article, validated against its template. Backup first, read back after. " +
-        "To add text, use append (RECOMMENDED): it adds Markdown at the end of a text field without rewriting what is there." +
-        CONFLICT_NOTE +
-        TEXT_NOTE,
-      inputSchema: {
-        id: id("article"),
-        title: z.string().trim().min(1).max(300).optional(),
-        fields: articleFields,
-        links,
-        category_id: z.string().trim().min(1).optional(),
-        state: z.enum(["private", "public"]).optional(),
-        is_draft: z.boolean().optional(),
-        append: z
-          .record(z.string(), z.string().min(1))
-          .optional()
-          .describe(
-            'Recommended way to edit text: Markdown added at the end of text fields, e.g. {"content": "A new paragraph."}. Existing text is kept byte for byte.',
-          ),
-        replace_fields: replaceFields,
-        raw_bbcode: rawBbcode,
-        expected_update_date: expected,
-        dry_run: dryRun,
-      },
-      annotations: WRITE,
-    },
-    handler(ctx, "wa_update_article", async (a, state) => {
-      const body: Json = { ...(a.fields ?? {}), ...linkFields(a.links) };
-      if (a.title) body.title = a.title;
-      if (a.category_id) body.category = { id: a.category_id };
-      if (a.state) body.state = a.state;
-      if (a.is_draft !== undefined) body.isDraft = a.is_draft;
-      return render(
-        ctx,
-        await updateElement(ctx, state, {
-          type: "article",
-          id: a.id,
-          body,
-          strictTemplates: true,
-          dryRun: a.dry_run,
-          expectedUpdateDate: a.expected_update_date,
-          linkFields: Object.keys(a.links ?? {}),
-          text: textOptions(a.raw_bbcode, a.replace_fields, a.append),
-        }),
-      );
-    }),
-  );
-
-  server.registerTool(
-    "wa_restore",
-    {
-      title: "Restore from a backup",
-      description:
-        "Without backup_id: list an element's backups. With backup_id: put the element back exactly as it was " +
-        "(a write: conflict-checked, backed up first, read back). If the element was deleted it is recreated with a " +
-        "NEW ID; links to the old ID break. A public backup is restored as private unless restore_public: true. " +
-        "scan_links: true also searches the world's articles for the old ID " +
-        "(slow: up to 100 articles, about 1.5 minutes).",
-      inputSchema: {
-        type: z.enum(writableTypes),
-        id: id("element"),
-        backup_id: z.string().trim().min(1).optional(),
-        scan_links: z.boolean().default(false),
-        restore_public: z
-          .boolean()
-          .default(false)
-          .describe(
-            "Only if the user explicitly asks: make the element public again when the backup was public.",
-          ),
-        expected_update_date: expected,
-        dry_run: dryRun,
-      },
-      annotations: WRITE,
-    },
-    handler(
-      ctx,
-      "wa_restore",
-      async (
-        { type, id, backup_id, scan_links, restore_public, expected_update_date, dry_run },
-        state,
-      ) => {
-        if (!backup_id) {
-          const list = listBackups(ctx, type, id).map((b) => ({
-            backup_id: b.backupId,
-            reason: b.reason,
-            taken_at: b.takenAt,
-            title: b.element.title,
-          }));
-          if (list.length === 0) throw new ToolError(`No backups for ${type} "${id}".`);
-          return textResult(
-            ctx,
-            [
-              serverLine(
-                `${list.length} backup(s) for ${type} "${id}", newest first. ${UNTRUSTED_NOTICE}`,
-              ),
-              wrapUntrusted(`backups:${type}:${id}`, JSON.stringify(list, null, 2)),
-            ].join("\n"),
-          );
-        }
+      handler(ctx, "wa_create_article", async (a, state) => {
+        const template = a.template.toLowerCase();
+        const body: Json = {
+          ...(a.fields ?? {}),
+          ...linkFields(a.links),
+          title: a.title,
+          templateType: template,
+          world: { id: a.world_id },
+        };
+        if (a.category_id) body.category = { id: a.category_id };
+        if (a.state) body.state = a.state;
+        if (a.is_draft !== undefined) body.isDraft = a.is_draft;
         return render(
           ctx,
-          await restoreElement(ctx, state, {
-            type,
-            id,
-            backupId: backup_id,
-            dryRun: dry_run,
-            scanLinks: scan_links,
-            restorePublic: restore_public,
-            expectedUpdateDate: expected_update_date,
+          await createElement(ctx, state, {
+            type: "article",
+            body,
+            strictTemplates: true,
+            dryRun: a.dry_run,
+            linkFields: Object.keys(a.links ?? {}),
+            text: textOptions(a.raw_bbcode),
           }),
         );
-      },
-    ),
-  );
+      }),
+    );
 
-  if (ctx.enableDelete) {
+  if (enabled(ctx, "wa_update_article"))
     server.registerTool(
-      "wa_delete",
+      "wa_update_article",
       {
-        title: "Delete an element",
+        title: "Update an article",
         description:
-          "Delete an element of a full_edit world. A full backup is saved first (restore recreates it with a new ID)." +
-          CONFLICT_NOTE,
+          "Update only the given fields of an article, validated against its template. Backup first, read back after. " +
+          "To add text, use append (RECOMMENDED): it adds Markdown at the end of a text field without rewriting what is there." +
+          CONFLICT_NOTE +
+          TEXT_NOTE,
         inputSchema: {
-          type: z.enum(writableTypes),
-          id: id("element"),
+          id: id("article"),
+          title: z.string().trim().min(1).max(300).optional(),
+          fields: articleFields,
+          links,
+          category_id: z.string().trim().min(1).optional(),
+          state: z.enum(["private", "public"]).optional(),
+          is_draft: z.boolean().optional(),
+          append: z
+            .record(z.string(), z.string().min(1))
+            .optional()
+            .describe(
+              'Recommended way to edit text: Markdown added at the end of text fields, e.g. {"content": "A new paragraph."}. Existing text is kept byte for byte.',
+            ),
+          replace_fields: replaceFields,
+          raw_bbcode: rawBbcode,
           expected_update_date: expected,
           dry_run: dryRun,
         },
-        annotations: DESTRUCTIVE,
+        annotations: WRITE,
       },
-      handler(ctx, "wa_delete", async ({ type, id, expected_update_date, dry_run }, state) =>
-        render(
+      handler(ctx, "wa_update_article", async (a, state) => {
+        const body: Json = { ...(a.fields ?? {}), ...linkFields(a.links) };
+        if (a.title) body.title = a.title;
+        if (a.category_id) body.category = { id: a.category_id };
+        if (a.state) body.state = a.state;
+        if (a.is_draft !== undefined) body.isDraft = a.is_draft;
+        return render(
           ctx,
-          await deleteElement(ctx, state, {
-            type,
-            id,
-            expectedUpdateDate: expected_update_date,
-            dryRun: dry_run,
+          await updateElement(ctx, state, {
+            type: "article",
+            id: a.id,
+            body,
+            strictTemplates: true,
+            dryRun: a.dry_run,
+            expectedUpdateDate: a.expected_update_date,
+            linkFields: Object.keys(a.links ?? {}),
+            text: textOptions(a.raw_bbcode, a.replace_fields, a.append),
           }),
-        ),
+        );
+      }),
+    );
+
+  if (enabled(ctx, "wa_restore"))
+    server.registerTool(
+      "wa_restore",
+      {
+        title: "Restore from a backup",
+        description:
+          "Without backup_id: list an element's backups. With backup_id: put the element back exactly as it was " +
+          "(a write: conflict-checked, backed up first, read back). If the element was deleted it is recreated with a " +
+          "NEW ID; links to the old ID break. A public backup is restored as private unless restore_public: true. " +
+          "scan_links: true also searches the world's articles for the old ID " +
+          "(slow: up to 100 articles, about 1.5 minutes).",
+        inputSchema: {
+          type: z.enum(writableTypes),
+          id: id("element"),
+          backup_id: z.string().trim().min(1).optional(),
+          scan_links: z.boolean().default(false),
+          restore_public: z
+            .boolean()
+            .default(false)
+            .describe(
+              "Only if the user explicitly asks: make the element public again when the backup was public.",
+            ),
+          expected_update_date: expected,
+          dry_run: dryRun,
+        },
+        annotations: WRITE,
+      },
+      handler(
+        ctx,
+        "wa_restore",
+        async (
+          { type, id, backup_id, scan_links, restore_public, expected_update_date, dry_run },
+          state,
+        ) => {
+          if (!backup_id) {
+            const list = listBackups(ctx, type, id).map((b) => ({
+              backup_id: b.backupId,
+              reason: b.reason,
+              taken_at: b.takenAt,
+              title: b.element.title,
+            }));
+            if (list.length === 0) throw new ToolError(`No backups for ${type} "${id}".`);
+            return textResult(
+              ctx,
+              [
+                serverLine(
+                  `${list.length} backup(s) for ${type} "${id}", newest first. ${UNTRUSTED_NOTICE}`,
+                ),
+                wrapUntrusted(`backups:${type}:${id}`, JSON.stringify(list, null, 2)),
+              ].join("\n"),
+            );
+          }
+          return render(
+            ctx,
+            await restoreElement(ctx, state, {
+              type,
+              id,
+              backupId: backup_id,
+              dryRun: dry_run,
+              scanLinks: scan_links,
+              restorePublic: restore_public,
+              expectedUpdateDate: expected_update_date,
+            }),
+          );
+        },
       ),
     );
+
+  if (ctx.enableDelete) {
+    if (enabled(ctx, "wa_delete"))
+      server.registerTool(
+        "wa_delete",
+        {
+          title: "Delete an element",
+          description:
+            "Delete an element of a full_edit world. A full backup is saved first (restore recreates it with a new ID)." +
+            CONFLICT_NOTE,
+          inputSchema: {
+            type: z.enum(writableTypes),
+            id: id("element"),
+            expected_update_date: expected,
+            dry_run: dryRun,
+          },
+          annotations: DESTRUCTIVE,
+        },
+        handler(ctx, "wa_delete", async ({ type, id, expected_update_date, dry_run }, state) =>
+          render(
+            ctx,
+            await deleteElement(ctx, state, {
+              type,
+              id,
+              expectedUpdateDate: expected_update_date,
+              dryRun: dry_run,
+            }),
+          ),
+        ),
+      );
   }
 }

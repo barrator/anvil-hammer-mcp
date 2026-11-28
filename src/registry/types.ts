@@ -49,6 +49,11 @@ export interface FieldDef {
   kindConfirmed?: boolean;
   /** Computed by World Anvil; never sent on create, update or restore. */
   writable?: false;
+  /**
+   * Never shown by the read tools (kept in backups): rendered duplicates such as
+   * `parsedContent`, and secrets or personal data such as a profile's tokens.
+   */
+  hidden?: true;
   note?: string;
 }
 
@@ -72,7 +77,10 @@ export interface ParentLink {
 
 export interface ListRoute {
   path: string;
-  /** Type whose id goes in ?id=. */
+  /**
+   * Type whose id goes in ?id=. "user": the token owner's own user id (filled in
+   * by the server). "none": a shared list with no parent (catalogs).
+   */
   parentType: string;
 }
 
@@ -87,9 +95,19 @@ export interface TemplateDef {
   quirks?: string[];
 }
 
+/**
+ * Where an element lives, which decides how access is checked:
+ * - world: belongs to a world; the world's access level applies (default);
+ * - account: the token owner's own data (profile, block templates), read-only here;
+ * - catalog: World Anvil's shared lists (marker types, RPG systems), read-only here.
+ */
+export type Scope = "world" | "account" | "catalog";
+
 export interface TypeDef {
   name: string;
   description: string;
+  /** Default "world". */
+  scope?: Scope;
   /** Route of the element itself, used by GET/PUT/PATCH/DELETE. */
   path: string;
   /** Granularity values accepted by GET, from the spec. */
@@ -98,14 +116,22 @@ export interface TypeDef {
   /** Granularity used for backups and read-back: the most complete one. */
   backupGranularity: string;
   list?: ListRoute;
-  /** Verbs the API supports for this type. */
+  /** Verbs this server allows for this type (the API may allow more, see apiVerbs). */
   verbs: Verb[];
+  /** Verbs the API documents, when this server allows fewer (account and catalog types). */
+  apiVerbs?: Verb[];
+  /** Verbs confirmed by a live-test run (set from observed.ts only). */
+  verifiedVerbs?: Verb[];
+  /** "verified" once a live-test run observed this type in a real response (set from observed.ts only). */
+  status?: "verified" | "unverified";
+  /** Show only registered, non-hidden fields (types that may carry personal data). */
+  outputAllowlist?: true;
   /** Direct reference to the world. Absent for the world type itself. */
   world?: WorldLink;
   /** Parent chain used when the world reference is missing, tried in order. */
   parents: ParentLink[];
   fields: Record<string, FieldDef>;
-  /** Defaults applied on create (used from stage B). */
+  /** Values set on create when the caller gives none (e.g. a note's undocumented type). */
   createDefaults?: Record<string, unknown>;
   /** Article only: template-specific fields. */
   templates?: Record<string, TemplateDef>;

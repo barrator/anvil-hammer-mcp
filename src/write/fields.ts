@@ -90,12 +90,15 @@ export function validateFields(
   return { body: out, warnings };
 }
 
-/** {id} or [{id}, ...] → list of ids; undefined if the value is not a reference. */
+/** {id} or [{id}, ...] → list of ids; undefined if the value is not a reference. Numeric ids (images) become text. */
 export function refIds(value: unknown): string[] | undefined {
-  const one = (v: unknown) =>
-    v && typeof v === "object" && !Array.isArray(v) && typeof (v as Json).id === "string"
-      ? ((v as Json).id as string)
-      : undefined;
+  const one = (v: unknown) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+    const id = (v as Json).id;
+    if (typeof id === "string" && id) return id;
+    if (typeof id === "number" && id !== -1) return String(id);
+    return undefined;
+  };
   if (Array.isArray(value)) {
     if (value.length === 0) return undefined;
     const ids = value.map(one);
@@ -113,7 +116,12 @@ export interface RefToCheck {
   unsupported?: string;
 }
 
-/** References in a body that must belong to the target world. `world` is handled separately. */
+/**
+ * References in a body that must be checked before sending. `world` is handled
+ * separately. World elements (images included) must be in the target world;
+ * account and catalog elements (block templates, RPG systems, marker types)
+ * must be readable. Types without a read route (eras) cannot be checked.
+ */
 export function referencesIn(def: TypeDef, body: Json, template?: string): RefToCheck[] {
   const known = knownFields(def, template);
   const out: RefToCheck[] = [];
@@ -125,13 +133,14 @@ export function referencesIn(def: TypeDef, body: Json, template?: string): RefTo
     const refType = f?.refType;
     for (const id of ids) {
       if (refType === "internal") continue; // internal IDs belong to no world
-      if (refType && REGISTRY[refType]) out.push({ field, id, type: refType });
-      else if (refType === "image")
+      const target = refType ? REGISTRY[refType] : undefined;
+      if (target && !target.verbs.includes("get"))
         out.push({
           field,
           id,
-          unsupported: "image references cannot be checked against the world yet",
+          unsupported: `${refType} references cannot be checked (World Anvil has no route to read them)`,
         });
+      else if (target) out.push({ field, id, type: refType });
       else if (refType)
         out.push({
           field,
@@ -156,6 +165,11 @@ export function applyCreateDefaults(def: TypeDef, body: Json): { body: Json; app
   if ("isDraft" in def.fields && out.isDraft === undefined) {
     out.isDraft = true;
     applied.push("isDraft=true");
+  }
+  for (const [k, v] of Object.entries(def.createDefaults ?? {})) {
+    if (out[k] !== undefined) continue;
+    out[k] = v;
+    applied.push(`${k}=${JSON.stringify(v)}`);
   }
   return { body: out, applied };
 }
@@ -238,15 +252,25 @@ export function compareReadBack(sent: Json, after: Json, before?: Json): Compari
 
 // ---------- Restore ----------
 
+/** The id of a reference as World Anvil returned it (text, or a number for images). */
+function rawId(v: unknown): string | number | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const id = (v as Json).id;
+  return (typeof id === "string" && id) || (typeof id === "number" && id !== -1) ? id : undefined;
+}
+
 /** Value to send for a field taken from a backup. */
 function toWrite(value: unknown, f: FieldDef): unknown {
   if (f.kind === "ref") {
-    const ids = refIds(value);
-    return ids ? { id: ids[0] } : null;
+    const id = rawId(Array.isArray(value) ? value[0] : value);
+    return id === undefined ? null : { id };
   }
   if (f.kind === "refs") {
-    const ids = refIds(value) ?? [];
-    return ids.map((id) => ({ id }));
+    const list = Array.isArray(value) ? value : [value];
+    return list
+      .map(rawId)
+      .filter((x) => x !== undefined)
+      .map((id) => ({ id }));
   }
   return value;
 }
@@ -262,6 +286,8 @@ function emptyFor(f: FieldDef): unknown {
  * Body that puts an element back as it was in a backup: every known writable
  * field that differs from the current element, including clearing fields that
  * were empty in the backup. Dates are left alone (World Anvil manages them).
+ * `images` names the image references the body sets: the caller checks that
+ * each image is readable and in the same world, and drops it otherwise.
  */
 export function restoreBody(
   def: TypeDef,
@@ -274,11 +300,6 @@ export function restoreBody(
   const images: string[] = [];
   for (const [k, f] of Object.entries(known)) {
     if (f.writable === false || f.kind === "date" || k === "world") continue;
-    if (f.refType === "image") {
-      // Image references cannot be checked against the world yet: never sent by a restore.
-      if (!isEmpty(backup[k]) && !sameValue(backup[k], current?.[k])) images.push(k);
-      continue;
-    }
     const b = backup[k];
     const c = current?.[k];
     let value: unknown;
@@ -291,6 +312,7 @@ export function restoreBody(
     }
     if (current !== undefined && sameValue(value, c)) continue;
     body[k] = value;
+    if (f.refType === "image" && refIds(value)) images.push(k);
   }
   const skipped = Object.keys(backup).filter((k) => !(k in known) && k !== "success");
   return { body, skipped, images };

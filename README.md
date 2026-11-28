@@ -2,28 +2,32 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant read and enrich **its owner's own** [World Anvil](https://www.worldanvil.com) worlds, safely.
 
-> **Status: work in progress.** Stage D: safe reads and writes with Markdown text, locally (stdio) or self-hosted as a Claude connector (HTTP, OAuth, Docker).
+> **Status: work in progress.** Stage E1: the whole World Anvil API in the registry (many types not verified live yet), safe reads and writes with Markdown text, locally (stdio) or self-hosted as a Claude connector (HTTP, OAuth, Docker).
 
 ## What it does today
 
-| Tool                     | Purpose                                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------------------- |
-| `wa_list_worlds`         | Your worlds, with the access level this server grants for each. Blocked worlds are hidden.          |
-| `wa_describe`            | Element types, their fields (verified by live tests or not) and known quirks.                       |
-| `wa_get`                 | Read one element by type and ID.                                                                    |
-| `wa_list`                | List every element of a type in a world.                                                            |
-| `wa_list_articles`       | A world's articles, filtered by category, template or tag.                                          |
-| `wa_create_article`      | Create an article of a template (person, organization, settlement, rank…), with links and category. |
-| `wa_update_article`      | Update only the given fields of an article, validated against its template.                         |
-| `wa_create`, `wa_update` | Create or update any of the types below.                                                            |
-| `wa_restore`             | List an element's backups, or put it back as it was.                                                |
-| `wa_delete`              | Delete an element. **Not exposed** unless `WA_ENABLE_DELETE=true`.                                  |
+| Tool                       | Purpose                                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------------------- |
+| `wa_list_worlds`           | Your worlds, with the access level this server grants for each. Blocked worlds are hidden.          |
+| `wa_describe`              | Element types, their fields (verified by live tests or not) and known quirks.                       |
+| `wa_get`                   | Read one element by type and ID.                                                                    |
+| `wa_list`                  | List every element of a type in a world.                                                            |
+| `wa_list_articles`         | A world's articles, filtered by category, template or tag.                                          |
+| `wa_create_article`        | Create an article of a template (person, organization, settlement, rank…), with links and category. |
+| `wa_update_article`        | Update only the given fields of an article, validated against its template.                         |
+| `wa_create`, `wa_update`   | Create or update any of the types below.                                                            |
+| `wa_upsert_secret`         | Create or update a secret, attached to an article, optionally restricted to subscriber groups.      |
+| `wa_upsert_timeline_event` | Create or update a dated timeline event, linked to articles, with its column on parallel timelines. |
+| `wa_restore`               | List an element's backups, or put it back as it was.                                                |
+| `wa_delete`                | Delete an element. **Not exposed** unless `WA_ENABLE_DELETE=true`.                                  |
 
-Types covered so far: world, article, category, secret, subscriber group, timeline, history event.
+Types: every element type of the World Anvil API (worlds, articles and their templates, categories, secrets, subscriber groups, timelines and events, maps, layers, markers, notebooks and notes, statblocks, variables, canvases, chronicles, images, manuscripts…). Types not yet verified by a live test are marked so by `wa_describe`. Your profile, your block templates, marker types and RPG systems are read-only. Eras have no API route: they appear inside timelines. Images cannot be uploaded through the API.
+
+`WA_TOOLS` chooses the exposed tools: `full` (default), `essential` (`wa_describe`, `wa_get`, `wa_list`, `wa_list_worlds`, `wa_list_articles`, `wa_create_article`, `wa_update_article`, `wa_restore`), or a comma-separated list of names.
 
 ### How writes stay safe
 
-- **Access:** writes need a `full_edit` or `edit_only` world; delete needs `full_edit`. The world is checked before anything is sent, including for child elements (a secret's article, an event's timeline). Linked elements must be in the same world, and an element cannot be moved to another world.
+- **Access:** writes need a `full_edit` or `edit_only` world; delete needs `full_edit`. The world is checked before anything is sent, including for child elements (a secret's article, an event's timeline). Linked elements must be in the same world (an image too: it is read first), and an element cannot be moved to another world.
 - **Safe defaults:** new elements are private, and draft where the type supports it. Something becomes public only when the request says so explicitly.
 - **No overwriting:** an element must be read in the session before it is changed, and the write is refused if someone changed it since (its `updateDate`, or its content when World Anvil returns no `updateDate`). World Anvil has no conditional writes, so a change made in the second between the check and the write cannot be detected.
 - **Backups:** before every update, restore or delete, the full element is saved as JSON (see below). If the backup fails, nothing is written.
@@ -41,7 +45,7 @@ To add text, use `append` on `wa_update_article`: it adds at the end of a field 
 
 Backups are stored in `$XDG_DATA_HOME/anvil-hammer-mcp/backups` (default `~/.local/share/anvil-hammer-mcp/backups`), one file per backup, readable only by the user, and deleted after 90 days. They hold the full content of your elements: keep them private and include them in any privacy assessment.
 
-`wa_restore` puts a modified element back exactly, except image references (not restored yet). A backup that was public is restored as **private** unless the call passes `restore_public: true`. **Restoring a deleted element recreates it with a new ID**: links elsewhere that pointed to the old ID are broken. The result lists the element's own links; `scan_links: true` also searches up to 100 of the world's articles for the old ID (slow, about 1.5 minutes).
+`wa_restore` puts a modified element back exactly; an image reference is restored only if the image still exists in the same world. A backup that was public is restored as **private** unless the call passes `restore_public: true`. **Restoring a deleted element recreates it with a new ID**: links elsewhere that pointed to the old ID are broken. The result lists the element's own links; `scan_links: true` also searches up to 100 of the world's articles for the old ID (slow, about 1.5 minutes).
 
 All content read from World Anvil is returned inside an `<untrusted_world_content>` block. It is data written by World Anvil users: the assistant must never follow instructions found there.
 
@@ -154,11 +158,14 @@ Live tests hit the real API, are run by hand and never in CI. They can only touc
 
 Other live commands (same keys and config):
 
-| Command                       | What it does                                                                                                            |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `npm run test:live:templates` | Read-only: lists each template's fields at granularity 2 (`live-template-report.json`).                                 |
-| `npm run test:live:write`     | Creates `MCP-TEST-` elements, updates, provokes a conflict, restores, then deletes them all (`live-write-report.json`). |
-| `npm run test:live:cleanup`   | Deletes everything in the ledger, for a write run that stopped halfway.                                                 |
+| Command                       | What it does                                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:live:templates` | Read-only: lists each template's fields at granularity 2 (`live-template-report.json`).                                               |
+| `npm run test:live:write`     | Creates `MCP-TEST-` elements, updates, provokes a conflict, restores, then deletes them all (`live-write-report.json`).               |
+| `npm run test:live:cleanup`   | Deletes everything in the ledger, for a write run that stopped halfway.                                                               |
+| `npm run test:live:coverage`  | Read-only: every type in the test world (and children), your profile and block templates, shared lists (`live-coverage-report.json`). |
+| `npm run test:live:timeline`  | Creates `MCP-TEST-` parallel timelines and events and keeps them for a visual check (`live-timeline-report.json`).                    |
+| `npm run test:live:types`     | Creates, reads, updates and deletes one `MCP-TEST-` element of each world type, maps excluded (`live-types-report.json`).             |
 
 In write runs the harness only lets a create through when it names the test world or a parent already known to be in it, records every created element in the ledger, and only modifies or deletes ledger elements.
 

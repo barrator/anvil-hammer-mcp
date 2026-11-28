@@ -3,13 +3,19 @@
  * may reach World Anvil:
  * - only the single test world declared in the local, gitignored config;
  * - elements of that world discovered by listing it, or recorded in the ledger;
- * - writes only on ledger elements whose title starts with MCP-TEST-
- *   (and, in this stage, no writes at all).
+ * - writes only on ledger elements whose title starts with MCP-TEST-; a create
+ *   must prove it targets the test world (the world itself, or a parent in the
+ *   ledger or discovered in the test world).
+ * Stage E adds READS only: child lists of discovered elements (a map's layers,
+ * a notebook's sections…), the token owner's own profile and block templates,
+ * and World Anvil's shared lists (marker types, RPG systems). Those account and
+ * shared elements can never serve as a create's proof, and are never written.
  * Never weaken these rules.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { WORLD_ANVIL_BASE_URL } from "../src/constants.js";
+import { REGISTRY } from "../src/registry/index.js";
 
 export const TEST_PREFIX = "MCP-TEST-";
 export const DEFAULT_LIVE_CONFIG = "live-test.config.json";
@@ -101,6 +107,20 @@ export const UNKNOWN_ROUTE_PROBE = "mcp-test-unknown-route";
 /** World-scoped list routes the tests may call with ?id=<test world>. */
 const WORLD_LISTS = /^world\/[a-z_]+$/;
 
+/** Registered list routes: path → the element type they return and the parent type of ?id=. */
+const LIST_ROUTES = new Map(
+  Object.values(REGISTRY)
+    .filter((t) => t.list)
+    .map((t) => [t.list!.path, { type: t.path, parent: t.list!.parentType }]),
+);
+const pathOf = (type: string) => REGISTRY[type]?.path ?? type;
+/** Shared lists with no parent (catalogs). */
+const SHARED_LISTS = new Set(
+  [...LIST_ROUTES].filter(([, r]) => r.parent === "none").map(([p]) => p),
+);
+/** Numeric ids (images, markers…) repeat across types: they must match the type they were found as. */
+const isNumericId = (id: string) => /^\d+$/.test(id);
+
 export interface GuardOptions {
   testWorldId: string;
   /** In write mode the guard records created elements and forgets deleted ones. */
@@ -135,8 +155,23 @@ function referencedIds(body: Record<string, unknown>): string[] {
  * leaves the process. Ids returned by lists of the test world become readable.
  */
 export function createGuardedFetch(inner: typeof fetch, opts: GuardOptions) {
-  const discovered = new Set<string>();
+  /** Elements of the test world: id → element paths it was listed as ("*": unknown type). */
+  const discovered = new Map<string, Set<string>>();
+  /** The token owner's account and shared elements: readable, never a create's proof, never written. */
+  const account = new Map<string, Set<string>>();
+  let ownUserId: string | undefined;
   const refused: string[] = [];
+
+  const add = (into: Map<string, Set<string>>, id: string, type: string) => {
+    if (!into.has(id)) into.set(id, new Set());
+    into.get(id)!.add(type);
+  };
+  const seenAs = (from: Map<string, Set<string>>, id: string, type: string) => {
+    const types = from.get(id);
+    if (!types) return false;
+    return !isNumericId(id) || types.has(type) || types.has("*");
+  };
+  const inWorld = (id: string, type: string) => seenAs(discovered, id, type) || opts.ledger.has(id);
 
   const refuse = (why: string): never => {
     refused.push(why);
@@ -152,19 +187,46 @@ export function createGuardedFetch(inner: typeof fetch, opts: GuardOptions) {
     const id = url.searchParams.get("id") ?? undefined;
     const isTestWorld = id === opts.testWorldId;
 
-    let collectIds = false;
+    /** Where ids returned by this call go, and as which type. */
+    let collect: { into: Map<string, Set<string>>; type: string } | undefined;
     let pendingCreate: { type: string; title: string } | undefined;
-    if (method === "GET" && (path === "identity" || path === UNKNOWN_ROUTE_PROBE)) {
+    let isIdentity = false;
+    const route = method === "POST" ? LIST_ROUTES.get(path) : undefined;
+
+    if (method === "GET" && path === UNKNOWN_ROUTE_PROBE) {
       // No world involved.
+    } else if (method === "GET" && path === "identity") {
+      isIdentity = true;
     } else if (method === "POST" && path === "user/worlds") {
       // The owner's world list; tests only check whether the test world is in it.
     } else if (method === "GET" && path === "world") {
       if (!isTestWorld) refuse("reading a world other than the test world");
+    } else if (method === "GET" && path === "user") {
+      if (!id || id !== ownUserId) refuse("reading a user other than the token's own user");
     } else if (method === "POST" && WORLD_LISTS.test(path)) {
       if (!isTestWorld) refuse("listing a world other than the test world");
-      collectIds = true;
+      collect = { into: discovered, type: route?.type ?? "*" };
+    } else if (method === "POST" && SHARED_LISTS.has(path)) {
+      if (id !== undefined) refuse("a shared list takes no parent");
+      collect = { into: account, type: route!.type };
+    } else if (method === "POST" && route?.parent === "user") {
+      if (!id || id !== ownUserId) refuse("listing another user's elements");
+      collect = { into: account, type: route.type };
+    } else if (method === "POST" && route) {
+      const parent = pathOf(route.parent);
+      const parentScope = REGISTRY[route.parent]?.scope ?? "world";
+      if (!id) refuse(`listing ${path} needs a parent`);
+      if (parentScope === "world") {
+        if (!inWorld(id!, parent))
+          refuse("listing under an element not discovered in the test world");
+        collect = { into: discovered, type: route.type };
+      } else {
+        if (!seenAs(account, id!, parent))
+          refuse("listing under an account element not discovered");
+        collect = { into: account, type: route.type };
+      }
     } else if (method === "GET") {
-      if (!id || !(discovered.has(id) || opts.ledger.has(id))) {
+      if (!id || !(inWorld(id, path) || seenAs(account, id, path))) {
         refuse("reading an element not discovered in the test world");
       }
     } else if (method === "PUT" || method === "PATCH" || method === "DELETE") {
@@ -181,7 +243,8 @@ export function createGuardedFetch(inner: typeof fetch, opts: GuardOptions) {
           refuse("creating outside the test world");
         // A create must PROVE it targets the test world: the world itself, or a
         // parent (article of a secret, timeline of an event, parent category…)
-        // that is in the ledger or was discovered in the test world.
+        // that is in the ledger or was discovered in the test world. Account
+        // and shared elements (a block's template, its RPG system) never count.
         if (world === undefined) {
           const known = referencedIds(body).some((x) => discovered.has(x) || opts.ledger.has(x));
           if (!known) refuse("a create must name the test world or a parent known to be in it");
@@ -193,24 +256,34 @@ export function createGuardedFetch(inner: typeof fetch, opts: GuardOptions) {
     }
 
     const res = await inner(input, init);
+    if (isIdentity && res.ok) {
+      try {
+        const me = (await res.clone().json()) as { id?: unknown };
+        if (typeof me.id === "string") ownUserId = me.id;
+      } catch {
+        // Not JSON: no user id.
+      }
+    }
     if (pendingCreate && res.ok) {
       try {
         const created = (await res.clone().json()) as { id?: unknown };
         const newId = typeof created.id === "number" ? String(created.id) : created.id;
         if (typeof newId === "string") {
           opts.ledger.record?.(pendingCreate.type, newId, pendingCreate.title);
-          discovered.add(newId);
+          add(discovered, newId, pendingCreate.type);
         }
       } catch {
         // No id in the response: nothing to record.
       }
     }
     if (method === "DELETE" && res.ok && id) opts.ledger.remove?.(id);
-    if (collectIds && res.ok) {
-      const copy = res.clone();
+    if (collect && res.ok) {
       try {
-        const body = (await copy.json()) as { entities?: { id?: unknown }[] };
-        for (const e of body.entities ?? []) if (typeof e.id === "string") discovered.add(e.id);
+        const body = (await res.clone().json()) as { entities?: { id?: unknown }[] };
+        for (const e of body.entities ?? []) {
+          const eid = typeof e.id === "number" ? String(e.id) : e.id;
+          if (typeof eid === "string") add(collect.into, eid, collect.type);
+        }
       } catch {
         // Not JSON: nothing to discover.
       }
@@ -218,5 +291,10 @@ export function createGuardedFetch(inner: typeof fetch, opts: GuardOptions) {
     return res;
   }) as typeof fetch;
 
-  return { fetch: guarded, discovered, refused };
+  return {
+    fetch: guarded,
+    /** Ids discovered in the test world so far. */
+    discoveredIds: () => [...discovered.keys()],
+    refused,
+  };
 }
