@@ -128,6 +128,13 @@ If the server does not start, `sudo docker compose logs server` gives the reason
 
 A connector added on the web is available in the desktop and mobile apps of the same account.
 
+Identities observed in production (the `client_id` each Claude surface presents). Both are on `claude.ai`, the default `WA_OAUTH_CIMD_HOSTS`, so there is nothing to configure:
+
+| Surface | `client_id` (Client ID Metadata Document) |
+|---|---|
+| Claude apps (web, desktop, mobile) | `https://claude.ai/oauth/mcp-oauth-client-metadata` |
+| Claude Code | `https://claude.ai/oauth/claude-code-client-metadata` |
+
 **Claude Code.**
 
 ```bash
