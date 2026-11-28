@@ -652,3 +652,28 @@ describe("restore details", () => {
     expect(fake.data.articles.find((a) => a.id === "article-edit-0001")!.state).toBe("private");
   });
 });
+
+describe("history links", () => {
+  it("checks the new history link fields against the world like any reference", async () => {
+    const { call, fake } = await connect();
+    const r = await call("wa_create", {
+      type: "history",
+      data: { title: "E", world: { id: EDIT_WORLD }, location: { id: "article-open-0001" } },
+    });
+    expect(r.text).toMatch(
+      /field "location" links to article "article-open-0001", which is not in the same world/,
+    );
+    expect(writes(fake.calls)).toHaveLength(0);
+    const ok = await call("wa_create", {
+      type: "history",
+      data: {
+        title: "E",
+        world: { id: EDIT_WORLD },
+        location: { id: "article-edit-0001" },
+        hour: 9,
+      },
+    });
+    expect(ok.isError, ok.text).toBe(false);
+    expect(ok.text).toMatch(/Stored: .*location/);
+  });
+});

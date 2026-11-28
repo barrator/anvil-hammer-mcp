@@ -10,7 +10,7 @@
  * test world); article.histories, article.secrets, world.genres.
  * Stage B write run (2026-11-28): world links of subscribergroup, timeline and
  * history (granularity 1), history.timelines and category.parent (granularity 2).
- * Their field names were not listed in that report, so their fields stay unverified.
+ * Second write run: their field names, listed below.
  */
 /** JSON kind of a value seen live (from the template probe). */
 export type ObservedKind = "string" | "ref" | "array" | "object";
@@ -424,17 +424,96 @@ export const LIVE_OBSERVED: Record<string, Observation> = {
     worldLink: true, // from granularity 2
     parentLinks: ["article"], // from granularity 2
   },
-  // Stage B write run (2026-11-28): MCP-TEST- elements created and read back at every granularity.
+  // Stage B write runs (2026-11-28): MCP-TEST- elements created and read back at
+  // every granularity. Second run: field names below ("observed").
   subscribergroup: {
-    fields: [],
+    fields: [
+      "creationDate",
+      "description",
+      "entityClass",
+      "folderId",
+      "icon",
+      "id",
+      "isAssignable",
+      "isDefault",
+      "isEditable",
+      "isHidden",
+      "position",
+      "slug",
+      "subscribergroups",
+      "tags",
+      "title",
+      "updateDate",
+      "url",
+      "world",
+    ],
     worldLink: true, // from granularity 1
   },
   timeline: {
-    fields: [],
+    // Not observed: eras.
+    fields: [
+      "article",
+      "category",
+      "creationDate",
+      "description",
+      "entityClass",
+      "folderId",
+      "histories",
+      "icon",
+      "id",
+      "isEditable",
+      "isWip",
+      "slug",
+      "state",
+      "subscribergroups",
+      "tags",
+      "title",
+      "type",
+      "updateDate",
+      "url",
+      "world",
+    ],
     worldLink: true, // from granularity 1
   },
   history: {
-    fields: [],
+    // Not observed: characters, organizations.
+    fields: [
+      "article",
+      "content",
+      "creationDate",
+      "day",
+      "endingDay",
+      "endingMonth",
+      "endingYear",
+      "entityClass",
+      "folderId",
+      "fullcontent",
+      "icon",
+      "id",
+      "isEditable",
+      "isWip",
+      "month",
+      "significance",
+      "slug",
+      "state",
+      "subscribergroups",
+      "tags",
+      "timelines",
+      "title",
+      "updateDate",
+      "url",
+      "world",
+      "year",
+      // Reported as "not in registry" by the same run, added to the registry for wa_upsert_timeline_event.
+      "endingHour",
+      "endingMinute",
+      "hour",
+      "location",
+      "militaryConflict",
+      "minute",
+      "report",
+      "species",
+    ],
     worldLink: true, // from granularity 1
     parentLinks: ["timelines"], // from granularity 2
   },

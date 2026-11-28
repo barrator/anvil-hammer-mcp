@@ -38,13 +38,23 @@ describe("registry", () => {
     expect(verified.sort()).toEqual(observed.sort());
   });
 
-  it("keeps fields of types whose field names were never reported entirely unverified", () => {
-    for (const name of ["subscribergroup", "timeline", "history"]) {
-      const t = REGISTRY[name]!;
-      expect(
-        Object.values(t.fields).every((f) => f.status === "unverified"),
-        name,
-      ).toBe(true);
+  it("keeps exactly the fields not observed in the stage B write run unverified", () => {
+    const unverified = (name: string) =>
+      Object.entries(REGISTRY[name]!.fields)
+        .filter(([, f]) => f.status !== "verified")
+        .map(([k]) => k)
+        .sort();
+    expect(unverified("subscribergroup")).toEqual([]);
+    expect(unverified("timeline")).toEqual(["eras"]);
+    expect(unverified("history")).toEqual(["characters", "organizations"]);
+    expect(unverified("category")).toEqual([]);
+  });
+
+  it("knows the history fields wa_upsert_timeline_event will need, as links where they link", () => {
+    const f = REGISTRY.history!.fields;
+    for (const k of ["hour", "minute", "endingHour", "endingMinute"]) expect(f[k], k).toBeDefined();
+    for (const k of ["location", "species", "report", "militaryConflict"]) {
+      expect(f[k], k).toMatchObject({ kind: "ref", refType: "article", kindConfirmed: false });
     }
   });
 

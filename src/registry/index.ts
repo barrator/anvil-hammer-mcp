@@ -179,7 +179,10 @@ const BASE: Record<string, TypeDef> = {
       articleRedirect: spec("ref", { refType: "article" }),
       editURL: spec("string", { writable: false }),
     },
-    quirks: ["Sending 'parentCategory' does nothing; use 'parent' (from notes)."],
+    quirks: [
+      "No isDraft: the key comes back empty but is never stored (stage B write run).",
+      "Sending 'parentCategory' does nothing; use 'parent' (from notes).",
+    ],
   },
 
   secret: {
@@ -228,7 +231,10 @@ const BASE: Record<string, TypeDef> = {
       isHidden: spec("boolean"),
       isAssignable: spec("boolean"),
     },
-    quirks: [],
+    quirks: [
+      "No state, isDraft or isWip: the keys come back empty but are never stored (stage B write run).",
+      "No usable updateDate when read before a write: conflict detection compares content instead (stage B write run).",
+    ],
   },
 
   timeline: {
@@ -253,7 +259,7 @@ const BASE: Record<string, TypeDef> = {
       category: spec("ref", { refType: "category" }),
       eras: spec("refs"),
     },
-    quirks: [],
+    quirks: ["No isDraft: the key comes back empty but is never stored (stage B write run)."],
   },
 
   history: {
@@ -284,8 +290,25 @@ const BASE: Record<string, TypeDef> = {
       article: spec("ref", { refType: "article" }),
       characters: spec("refs", { refType: "article" }),
       organizations: spec("refs", { refType: "article" }),
+      // Seen live in the stage B write run; added for wa_upsert_timeline_event (stage E):
+      // finer dating and links to articles. Kinds come from the spec (or the name), not from a value.
+      hour: spec("integer", { kindConfirmed: false }),
+      minute: spec("string", { kindConfirmed: false, note: "The spec types it as text." }),
+      endingHour: spec("integer", { kindConfirmed: false }),
+      endingMinute: spec("integer", { kindConfirmed: false }),
+      location: spec("ref", { refType: "article", kindConfirmed: false }),
+      species: spec("ref", { refType: "article", kindConfirmed: false }),
+      report: spec("ref", { refType: "article", kindConfirmed: false }),
+      militaryConflict: {
+        kind: "ref",
+        refType: "article",
+        status: "unverified",
+        source: "probe",
+        kindConfirmed: false,
+        note: "Not in the spec; kind inferred from the name.",
+      },
     },
-    quirks: [],
+    quirks: ["No isDraft: the key comes back empty but is never stored (stage B write run)."],
   },
 };
 

@@ -41,3 +41,13 @@ Offline tests for every registry entry (routes, parents, defaults, quirks). Live
 - [ ] With the `essential` group, how many tools appear?
 - [ ] README: could a stranger install it from scratch?
 - [ ] Search the repo for your world's name and IDs: nothing?
+
+## Notes from stage B
+
+Fields returned by World Anvil for timelines and history events but not in the registry yet (stage B write run, names only). Add them in this stage, with live verification of their kinds.
+
+- **Timeline:** allowComments, almanac, author, backgroundImage, calendar, cover, displayCenterYear, displayCss, displayRenderType, likes, presentationParameters, showInToc, utdOffset, version, views.
+- **History event:** author, backgroundColor, category, cover, dayOfRecurrence, displayDateName, displayRange, durationStartDay, durationStartWeekday, durationStartYear, editURL, endingSeconds, lane, likes, meta, monthsRecurrence, parsedContent, recurrencePeriod, recurrenceUnit, recurringAlmanac, seconds, stellarBodyPhase, stellarBodyRecurrence, type, weekdaysRecurrence.
+- Already added in stage B for `wa_upsert_timeline_event` (verified names, kinds not yet confirmed by a value): hour, minute, endingHour, endingMinute, location, species, report, militaryConflict.
+- Not to add: `isDraft` (timeline, history), and `state`/`isDraft`/`isWip` (subscriber group). The keys come back empty and are never stored.
+- Not observed yet: timeline `eras`; history `characters`, `organizations`.
