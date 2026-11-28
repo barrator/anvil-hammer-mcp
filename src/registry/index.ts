@@ -1,5 +1,6 @@
-import { LIVE_OBSERVED } from "./observed.js";
-import type { FieldDef, FieldKind, TypeDef } from "./types.js";
+import { LIVE_OBSERVED, type ObservedKind } from "./observed.js";
+import { TEMPLATES } from "./templates.js";
+import type { FieldDef, FieldKind, TemplateDef, TypeDef } from "./types.js";
 
 /** Field taken from the official spec, not yet observed live. */
 const spec = (kind: FieldKind, extra: Partial<FieldDef> = {}): FieldDef => ({
@@ -22,21 +23,28 @@ const bb = (extra: Partial<FieldDef> = {}) => spec("string", { bbcode: true, ...
 
 /** Fields every element shares (spec "Ref" schemas). */
 const COMMON: Record<string, FieldDef> = {
-  id: spec("string"),
+  id: spec("string", { writable: false }),
   title: spec("string"),
-  slug: spec("string"),
+  slug: spec("string", { writable: false }),
   state: spec("string", { note: "public or private" }),
   isWip: spec("boolean"),
   isDraft: spec("boolean"),
-  entityClass: spec("string"),
+  entityClass: spec("string", { writable: false }),
   icon: spec("string"),
-  url: spec("string"),
+  url: spec("string", { writable: false }),
   subscribergroups: spec("refs", { refType: "subscribergroup" }),
   folderId: spec("string"),
   tags: spec("string", { note: "comma-separated" }),
-  updateDate: spec("date"),
-  creationDate: spec("date"),
-  isEditable: spec("boolean"),
+  updateDate: spec("date", { writable: false }),
+  creationDate: spec("date", { writable: false }),
+  isEditable: spec("boolean", { writable: false }),
+};
+
+/** Subscriber groups have no isWip/isDraft in the spec. */
+const withoutDraft = (fields: Record<string, FieldDef>): Record<string, FieldDef> => {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([k]) => k !== "isWip" && k !== "isDraft"),
+  );
 };
 
 const worldRef = (granularity: string) =>
@@ -49,6 +57,7 @@ const BASE: Record<string, TypeDef> = {
     path: "world",
     granularities: ["-1", "0", "1"],
     defaultGranularity: "0",
+    backupGranularity: "1",
     list: { path: "user/worlds", parentType: "user" },
     verbs: ["get", "list", "create", "update", "delete"],
     parents: [],
@@ -58,11 +67,11 @@ const BASE: Record<string, TypeDef> = {
       description: bb(),
       excerpt: spec("string"),
       locale: spec("string"),
-      owner: spec("ref", { refType: "user" }),
-      countArticles: spec("integer"),
-      countMaps: spec("integer"),
-      countTimelines: spec("integer"),
-      countFollowers: spec("integer"),
+      owner: spec("ref", { refType: "user", writable: false }),
+      countArticles: spec("integer", { writable: false }),
+      countMaps: spec("integer", { writable: false }),
+      countTimelines: spec("integer", { writable: false }),
+      countFollowers: spec("integer", { writable: false }),
       worldSidebarContent: bb(),
       globalAnnouncement: bb(),
       globalHeader: bb(),
@@ -82,6 +91,7 @@ const BASE: Record<string, TypeDef> = {
     path: "article",
     granularities: ["-1", "0", "1", "2", "3"],
     defaultGranularity: "1",
+    backupGranularity: "2",
     list: { path: "world/articles", parentType: "world" },
     verbs: ["get", "list", "create", "update", "delete"],
     world: worldRef("1"),
@@ -95,7 +105,7 @@ const BASE: Record<string, TypeDef> = {
       }),
       world: spec("ref", { refType: "world", requiredOnCreate: true }),
       category: spec("ref", { refType: "category" }),
-      author: spec("ref", { refType: "user" }),
+      author: spec("ref", { refType: "user", writable: false }),
       articleParent: spec("ref", { refType: "article" }),
       content: bb(),
       excerpt: spec("string"),
@@ -111,17 +121,17 @@ const BASE: Record<string, TypeDef> = {
       scrapbook: bb(),
       credits: bb(),
       position: spec("integer"),
-      wordcount: spec("integer"),
+      wordcount: spec("integer", { writable: false }),
       publicationDate: spec("date"),
       cover: spec("ref", { refType: "image" }),
       secrets: spec("refs", { refType: "secret" }),
       histories: spec("refs", { refType: "history" }),
-      editURL: spec("string"),
+      editURL: spec("string", { writable: false }),
     },
-    createDefaults: { state: "private", isDraft: true },
     templates: {
       location: {
-        description: "Location template (the only template the spec documents).",
+        description: "Location template (the only template the spec documents). Not probed yet.",
+        probed: false,
         fields: {
           alternativename: spec("string"),
           geography: bb(),
@@ -136,21 +146,7 @@ const BASE: Record<string, TypeDef> = {
           organization: spec("ref", { refType: "article" }),
         },
       },
-      person: { description: "Person template. Fields not documented by the spec.", fields: {} },
-      organization: {
-        description: "Organization template. Fields not documented by the spec.",
-        fields: {
-          type: notes(
-            "ref",
-            "Requires an internal type ID. Sending the type name returns 200 and stores nothing. No route lists the types.",
-          ),
-        },
-      },
-      rank: { description: "Rank template. Fields not documented by the spec.", fields: {} },
-      settlement: {
-        description: "Settlement template. Fields not documented by the spec.",
-        fields: {},
-      },
+      ...TEMPLATES,
     },
     quirks: [
       "templateType in lowercase works for every template even though the spec only lists 'article' (from notes).",
@@ -165,6 +161,7 @@ const BASE: Record<string, TypeDef> = {
     path: "category",
     granularities: ["-1", "0", "1", "2"],
     defaultGranularity: "1",
+    backupGranularity: "2",
     list: { path: "world/categories", parentType: "world" },
     verbs: ["get", "list", "create", "update", "delete"],
     world: worldRef("2"),
@@ -183,7 +180,7 @@ const BASE: Record<string, TypeDef> = {
       isBook: spec("boolean"),
       isCollapsed: spec("boolean"),
       articleRedirect: spec("ref", { refType: "article" }),
-      editURL: spec("string"),
+      editURL: spec("string", { writable: false }),
     },
     quirks: ["Sending 'parentCategory' does nothing; use 'parent' (from notes)."],
   },
@@ -195,6 +192,7 @@ const BASE: Record<string, TypeDef> = {
     path: "secret",
     granularities: ["-1", "0", "2"],
     defaultGranularity: "2",
+    backupGranularity: "2",
     list: { path: "world/secrets", parentType: "world" },
     verbs: ["get", "list", "create", "update", "delete"],
     world: worldRef("2"),
@@ -205,8 +203,8 @@ const BASE: Record<string, TypeDef> = {
       world: spec("ref", { refType: "world", requiredOnCreate: true }),
       content: bb(),
       article: spec("ref", { refType: "article" }),
-      author: spec("ref", { refType: "user" }),
-      editURL: spec("string"),
+      author: spec("ref", { refType: "user", writable: false }),
+      editURL: spec("string", { writable: false }),
     },
     quirks: [],
   },
@@ -218,12 +216,13 @@ const BASE: Record<string, TypeDef> = {
     path: "subscribergroup",
     granularities: ["-1", "0", "1"],
     defaultGranularity: "1",
+    backupGranularity: "1",
     list: { path: "world/subscribergroups", parentType: "world" },
     verbs: ["get", "list", "create", "update", "delete"],
     world: worldRef("1"),
     parents: [],
     fields: {
-      ...COMMON,
+      ...withoutDraft(COMMON),
       title: spec("string", { requiredOnCreate: true }),
       world: spec("ref", { refType: "world", requiredOnCreate: true }),
       description: bb(),
@@ -241,6 +240,7 @@ const BASE: Record<string, TypeDef> = {
     path: "timeline",
     granularities: ["-1", "0", "1", "2"],
     defaultGranularity: "1",
+    backupGranularity: "2",
     list: { path: "world/timelines", parentType: "world" },
     verbs: ["get", "list", "create", "update", "delete"],
     world: worldRef("1"),
@@ -265,6 +265,7 @@ const BASE: Record<string, TypeDef> = {
     path: "history",
     granularities: ["-1", "0", "1", "2"],
     defaultGranularity: "1",
+    backupGranularity: "2",
     list: { path: "world/histories", parentType: "world" },
     verbs: ["get", "list", "create", "update", "delete"],
     world: worldRef("1"),
@@ -291,6 +292,57 @@ const BASE: Record<string, TypeDef> = {
   },
 };
 
+/** Does a JSON kind seen live confirm the registry's inferred kind? */
+function kindMatches(observed: ObservedKind, def: FieldDef): boolean {
+  switch (observed) {
+    case "string":
+      return def.kind === "string";
+    case "ref":
+      return def.kind === "ref" && def.refType !== "image";
+    case "array":
+      return def.kind === "refs" || def.kind === "list";
+    case "object":
+      return def.kind === "ref" && def.refType === "image";
+  }
+}
+
+function applyTemplateObservations(
+  type: string,
+  templates: Record<string, TemplateDef>,
+  observed: Readonly<
+    Record<string, { fields: readonly string[]; kinds: Readonly<Record<string, ObservedKind>> }>
+  >,
+): Record<string, TemplateDef> {
+  const out: Record<string, TemplateDef> = {};
+  for (const [tname, tpl] of Object.entries(templates)) {
+    const obs = observed[tname];
+    if (!obs) {
+      out[tname] = tpl;
+      continue;
+    }
+    for (const f of obs.fields) {
+      if (!(f in tpl.fields))
+        throw new Error(`Observed field ${type}.${tname}.${f} is not in the registry.`);
+    }
+    const fields: Record<string, FieldDef> = {};
+    for (const [f, d] of Object.entries(tpl.fields)) {
+      if (!obs.fields.includes(f)) {
+        fields[f] = d;
+        continue;
+      }
+      const seen = obs.kinds[f];
+      if (seen && !kindMatches(seen, d)) {
+        throw new Error(
+          `Observed kind ${seen} for ${type}.${tname}.${f} contradicts registry kind ${d.kind}.`,
+        );
+      }
+      fields[f] = { ...d, status: "verified", ...(seen ? { kindConfirmed: true } : {}) };
+    }
+    out[tname] = { ...tpl, fields };
+  }
+  return out;
+}
+
 /**
  * Apply live observations: observed fields and links become `verified`.
  * A field listed as observed but missing from the registry is a mistake and fails loudly.
@@ -314,6 +366,8 @@ function applyObservations(base: Record<string, TypeDef>): Record<string, TypeDe
     out[name] = {
       ...def,
       fields,
+      templates:
+        def.templates && applyTemplateObservations(name, def.templates, obs.templates ?? {}),
       world: def.world && obs.worldLink ? { ...def.world, status: "verified" } : def.world,
       parents: def.parents.map((p) =>
         obs.parentLinks?.includes(p.field) ? { ...p, status: "verified" } : p,

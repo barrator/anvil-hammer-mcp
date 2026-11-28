@@ -13,6 +13,7 @@ describe("access levels", () => {
     expect(worlds.map((w) => [w.id, w.accessLevel])).toEqual([
       ["world-open-0001", "read_only"],
       ["world-edit-0003", "edit_only"],
+      ["world-full-0004", "full_edit"],
     ]);
     expect(r.text).not.toContain("world-blocked-0002");
     expect(r.text).not.toContain("Testland Hidden");

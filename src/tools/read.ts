@@ -134,8 +134,8 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
           templates: t.templates ? Object.keys(t.templates) : undefined,
         }));
         const note =
-          "This version of the server is read-only: only get and list are available as tools, " +
-          "whatever verbs World Anvil supports.";
+          "Worlds can be read and updated but not created or deleted through this server. " +
+          "Delete is available only when the server configuration enables it.";
         return textResult(ctx, [serverLine(note), JSON.stringify(types, null, 2)].join("\n"));
       }
       const t = getType(type);

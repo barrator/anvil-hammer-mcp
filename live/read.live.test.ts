@@ -5,6 +5,9 @@
  *
  * Writes live-test-report.json (gitignored) and prints a summary with no real data.
  */
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -36,7 +39,14 @@ function requireKeyFiles() {
 }
 
 async function mcp(access: AccessPolicy) {
-  const config: Config = { secrets, access, maxResponseChars: DEFAULT_MAX_RESPONSE_CHARS };
+  const config: Config = {
+    secrets,
+    access,
+    maxResponseChars: DEFAULT_MAX_RESPONSE_CHARS,
+    backupDir: mkdtempSync(join(tmpdir(), "ahm-live-read-")),
+    backupRetentionDays: 1,
+    enableDelete: false,
+  };
   const server = createServer(config, { clientOptions: { fetch: guard.fetch } });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const c = new Client({ name: "live-test", version: "0" });

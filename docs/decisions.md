@@ -29,3 +29,15 @@ One line per decision: date, decision, reason. Newest at the bottom.
 | 2026-11-27 | `WA_MAX_RESPONSE_CHARS` accepted by the owner | The architecture already makes the max size configurable |
 | 2026-11-27 | The cloud development environment may reach worldanvil.com to read the public spec, but never holds keys; live tests run only on the owner's VPS | Keys stay on infrastructure the owner controls |
 | 2026-11-27 | No AI attribution in commits or PRs (no co-author trailer, session link or footer); the owner is author and committer; AI assistance disclosed once in the README | The maintainer answers for every change; per-commit AI co-authorship is contested in open source, while a single disclosure stays honest |
+| 2026-11-28 | Template probe (read-only live run) before writes; the 4 probed templates (person, organization, settlement, rank) refuse unknown fields, unprobed templates accept them with a warning | Strict refusal needs a real field list; the read-back still reports what World Anvil ignored |
+| 2026-11-28 | Field kinds of probed templates are inferred from names and the spec and marked `kindConfirmed: false` unless a real value was seen | A field name being real does not prove what it holds |
+| 2026-11-28 | Generic `wa_create`/`wa_update` warn on unknown fields instead of refusing | The registry is incomplete; read-back catches ignored fields |
+| 2026-11-28 | References to another world are refused; an element cannot change world; worlds are never created or deleted | Writes stay inside one checked world |
+| 2026-11-28 | Image and other unregistered references are refused for now | Their world cannot be checked until the type is registered |
+| 2026-11-28 | Restoring a deleted element lists its own links; `scan_links: true` scans up to 100 world articles for the old ID | A full scan is too slow to do by default |
+| 2026-11-28 | Backups default to the user's data folder (`XDG_DATA_HOME`, else `~/.local/share`), never the current directory | Predictable location outside the project; `WA_BACKUP_DIR` overrides |
+| 2026-11-28 | A failed backup refuses the write | Principle 4: no modification without a safety net |
+| 2026-11-28 | Delete also requires a prior read and an unchanged `updateDate` | Deleting is the most destructive write |
+| 2026-11-28 | Live write test deletes what it created, with delete enabled only for that test; `test:live:cleanup` empties the ledger after an interrupted run | Leave the test world clean; recover from crashes |
+| 2026-11-28 | Harness write mode: a create must prove it targets the test world (`world.id` or a known parent); created elements are recorded in the ledger automatically | A create without world could otherwise land in another world |
+| 2026-11-28 | Commit signing disabled for this repository | The environment's signing key is unknown to GitHub, which shows "Unverified": worse than unsigned |

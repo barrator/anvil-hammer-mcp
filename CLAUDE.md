@@ -58,7 +58,8 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - Single-element responses include a `success` flag. It is a response flag, not an element field: it is stripped from tool output and ignored by the registry comparison.
 - No documented rate limit. Space calls about 750 ms apart and back off on 429.
 - Article templates: `templateType` in lowercase works for every template (`person`, `organization`, `rank`, `settlement`…) even though the spec only lists `article`. A new article is automatically marked WIP as well as draft.
-- Template-specific fields are written and read back like any other field. The official spec documents fields for one template only (Location); read others from an existing article at granularity 2.
+- Template-specific fields are written and read back like any other field. The official spec documents fields for one template only (Location). The stage B probe listed the fields of person (123), organization (58), settlement (44) and rank (25) from real granularity-2 responses; they live in `src/registry/templates.ts`.
+- Template fields that hold images (`portrait`, `flag`) come back as objects; they can only reference an image already uploaded on the site.
 - Relations are sent as `{"id": "..."}` objects, e.g. `{"organization": {"id": "..."}}`.
 - Organization `type` requires an internal type ID. Sending the type's name returns 200 and stores nothing. No route lists the types.
 - Category parent is `parent`, not `parentCategory` (otherwise nothing happens). Categories have two text fields: `description` and `custom1`.
@@ -73,6 +74,10 @@ Keep this list current. Every new quirk found in testing goes here and in the re
 - **Access before content.** A world's level is checked before any World Anvil call that targets it (world reads, every list). An element read by ID is resolved to its world (own `world` field, else the parent chain) before anything is returned; if no chain leads to a world, the read is refused. A `blocked` world answers exactly like a missing element, everywhere.
 - **Per-session state.** Remembered `updateDate`s and resolved worlds are stored per MCP session, never globally (HTTP mode serves several clients).
 - **Truncation.** Over the size limit, `wa_get` suggests `fields`; lists suggest `offset`.
+- **Writes.** Order is fixed: read current state → resolve world → check level → validate fields → check references (same world only) → check conflict → dry run stops here → backup (failure refuses the write) → write → read back and compare. Worlds are never created or deleted. New elements are private, and draft where supported; public only on explicit request.
+- **Template fields.** Probed templates (`observed.ts` → `templates`) refuse unknown fields in the article tools; unprobed templates accept them with a warning; generic `wa_create`/`wa_update` warn. Field kinds inferred from names stay `kindConfirmed: false` until a real value confirms them.
+- **References.** Every `{id}` sent must resolve to the target world. `internal` IDs (organization/location/rank types) are exempt; image and other unregistered references are refused until their type is registered.
+- **Backups.** Default folder `$XDG_DATA_HOME/anvil-hammer-mcp/backups` (else `~/.local/share/...`), never relative to the current directory; `WA_BACKUP_DIR` overrides. Files 0600, folders 0700, retention by the timestamp in the file name.
 - **Registry status.** A field is `verified` only once a live-test run has observed it in a real response. Entries from the spec or from the quirks above start `unverified`. Promote them from the live report (`registry.observed`) by adding them to `src/registry/observed.ts`, the only place that marks anything verified.
 
 ## Live tests
@@ -81,6 +86,7 @@ Offline tests (`npm test`) never touch the network. Live tests (`npm run test:li
 
 - Config: `live-test.config.json` (gitignored), `{"testWorldId": "...", "ledgerFile": "live-test.ledger.json"}`; path overridable with `WA_LIVE_CONFIG`.
 - Keys: files only, `WA_APP_KEY_FILE` and `WA_AUTH_TOKEN_FILE`.
-- Command: `WA_APP_KEY_FILE=... WA_AUTH_TOKEN_FILE=... npm run test:live`.
+- Commands: `npm run test:live` (stage A read), `test:live:templates` (template probe, read-only), `test:live:write` (stage B writes, deletes what it created), `test:live:cleanup` (deletes everything in the ledger). Prefix each with `WA_APP_KEY_FILE=... WA_AUTH_TOKEN_FILE=...`.
+- Write mode: a `PUT` must prove it targets the test world (`world.id`, or a parent in the ledger or discovered in the test world); created elements are recorded in the ledger automatically; `PATCH`/`DELETE` only on ledger elements.
 - Output: `live-test-report.json` (gitignored) and a printed summary holding structure only (field names, counts, pass/fail), safe to paste in a PR.
 - The harness (`live/harness.ts`) has offline tests (`test/live-harness.test.ts`); they must keep passing.

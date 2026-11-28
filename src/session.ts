@@ -3,8 +3,21 @@
  * nothing here is global: each session id gets its own state.
  */
 
+/**
+ * Normalize an updateDate for comparison. World Anvil returns an object
+ * {date, timezone_type, timezone}; callers may pass the date string alone.
+ */
+export function normalizeUpdateDate(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "object" && typeof (value as { date?: unknown }).date === "string") {
+    return (value as { date: string }).date.trim();
+  }
+  return JSON.stringify(value);
+}
+
 export interface SeenUpdate {
-  /** updateDate exactly as World Anvil returned it, serialized for comparison. */
+  /** Normalized updateDate (see normalizeUpdateDate). */
   updateDate: string;
   readAt: number;
 }
@@ -16,12 +29,19 @@ export class SessionState {
   readonly worlds = new Map<string, string>();
 
   rememberUpdateDate(type: string, id: string, updateDate: unknown, now = Date.now()): void {
-    if (updateDate === undefined || updateDate === null || updateDate === "") return;
-    this.updateDates.set(`${type}:${id}`, { updateDate: JSON.stringify(updateDate), readAt: now });
+    const normalized = normalizeUpdateDate(updateDate);
+    if (normalized === undefined) return;
+    this.updateDates.set(`${type}:${id}`, { updateDate: normalized, readAt: now });
   }
 
   lastUpdateDate(type: string, id: string): SeenUpdate | undefined {
     return this.updateDates.get(`${type}:${id}`);
+  }
+
+  /** Forget an element (after it was deleted). */
+  forget(type: string, id: string): void {
+    this.updateDates.delete(`${type}:${id}`);
+    this.worlds.delete(`${type}:${id}`);
   }
 }
 

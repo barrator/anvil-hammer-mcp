@@ -17,6 +17,7 @@ live-test.config.json
 live-test.ledger.json
 live-test-report.json
 live-template-report.json
+live-write-report.json
 
 # Local data folders (backups, index, logs)
 data/

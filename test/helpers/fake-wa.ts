@@ -143,9 +143,79 @@ export function seedData() {
       world: wref("world-open-0001"),
       updateDate: date("2026-06-01"),
     },
+    {
+      id: "category-edit-0001",
+      title: "Invented Editable Category",
+      world: wref("world-edit-0003"),
+      updateDate: date("2026-06-02"),
+    },
   ];
 
-  return { worlds, articles, secrets, timelines, histories, categories };
+  // world-edit-0003 is edit_only and world-full-0004 full_edit in the test access file.
+  worlds.push({
+    id: "world-full-0004",
+    title: "Testland Delta",
+    entityClass: "World",
+    updateDate: date("2026-01-04"),
+  });
+  categories.push({
+    id: "category-full-0001",
+    title: "Full Category",
+    world: wref("world-full-0004"),
+    updateDate: date("2026-06-03"),
+  });
+  articles.push(
+    {
+      id: "article-edit-0001",
+      title: "Editable Person",
+      entityClass: "Person",
+      templateType: "person",
+      state: "private",
+      isDraft: true,
+      world: wref("world-edit-0003"),
+      content: "Original invented content.",
+      nickname: "Original nickname",
+      updateDate: date("2026-07-01"),
+    },
+    {
+      id: "article-edit-0002",
+      title: "Editable Organization",
+      entityClass: "Organization",
+      templateType: "organization",
+      state: "private",
+      world: wref("world-edit-0003"),
+      updateDate: date("2026-07-02"),
+    },
+    {
+      id: "article-full-0001",
+      title: "Deletable Article",
+      entityClass: "Article",
+      templateType: "article",
+      world: wref("world-full-0004"),
+      content: "Invented content to delete.",
+      category: { id: "category-full-0001", title: "Full Category", entityClass: "Category" },
+      updateDate: date("2026-07-03"),
+    },
+    {
+      id: "article-full-0002",
+      title: "Article Linking To Deletable",
+      entityClass: "Article",
+      templateType: "article",
+      world: wref("world-full-0004"),
+      content: "See [url:article-full-0001]",
+      updateDate: date("2026-07-04"),
+    },
+  );
+
+  return {
+    worlds,
+    articles,
+    secrets,
+    timelines,
+    histories,
+    categories,
+    subscribergroups: [] as Json[],
+  };
 }
 
 export type FakeData = ReturnType<typeof seedData>;
@@ -155,7 +225,13 @@ export interface FakeOptions {
   override?: (call: RecordedCall) => Response | undefined;
   /** Hide fields below a granularity, to mimic World Anvil (field → min granularity). */
   minGranularity?: Record<string, number>;
+  /** Fields World Anvil accepts with 200 but does not store. Default: organization type given as a name. */
+  ignore?: (type: string, field: string, value: unknown) => boolean;
 }
+
+/** Mimics World Anvil ignoring an organization type sent by name instead of {id}. */
+const defaultIgnore = (_type: string, field: string, value: unknown) =>
+  field === "type" && typeof value === "string";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -177,7 +253,12 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
     timeline: data.timelines,
     history: data.histories,
     category: data.categories,
+    subscribergroup: (data as { subscribergroups?: Json[] }).subscribergroups ?? [],
   };
+  const ignore = options.ignore ?? defaultIgnore;
+  let created = 0;
+  let clock = 0;
+  const stamp = () => date(`2026-09-${String(1 + (clock++ % 28)).padStart(2, "0")}`);
 
   const shape = (el: Json, granularity: number): Json => {
     const out: Json = {};
@@ -261,6 +342,52 @@ export function createFakeWorldAnvil(data: FakeData = seedData(), options: FakeO
         success: true,
         entities: list.slice(offset, offset + limit).map((e) => shape(e, -1)),
       });
+    }
+
+    if (call.method === "PUT") {
+      const coll = collections[path];
+      if (!coll) return htmlNotFound();
+      const body = call.body ?? {};
+      if (typeof body.title !== "string" || !body.title) {
+        return json(
+          {
+            success: false,
+            status: "Unprocessable Data provided",
+            error: { summary: "title is required" },
+          },
+          422,
+        );
+      }
+      const id = `created-${path}-${String(++created).padStart(4, "0")}`;
+      const el: Json = {
+        id,
+        entityClass: path[0]!.toUpperCase() + path.slice(1),
+        isWip: path === "article" ? true : undefined,
+      };
+      for (const [k, v] of Object.entries(body)) if (!ignore(path, k, v)) el[k] = v;
+      el.updateDate = stamp();
+      el.editURL = `https://fake.invalid/edit/${id}`;
+      coll.push(el);
+      return json({ id, title: el.title, success: true });
+    }
+
+    if (call.method === "PATCH") {
+      const coll = collections[path];
+      if (!coll) return htmlNotFound();
+      const el = coll.find((e) => e.id === call.query.id);
+      if (!el) return json({ success: false, error: "resource_not_found" }, 404);
+      for (const [k, v] of Object.entries(call.body ?? {})) if (!ignore(path, k, v)) el[k] = v;
+      el.updateDate = stamp();
+      return json({ id: el.id, success: true });
+    }
+
+    if (call.method === "DELETE") {
+      const coll = collections[path];
+      if (!coll) return htmlNotFound();
+      const i = coll.findIndex((e) => e.id === call.query.id);
+      if (i < 0) return json({ success: false, error: "resource_not_found" }, 404);
+      coll.splice(i, 1);
+      return json({ success: true });
     }
 
     if (call.method === "GET") {

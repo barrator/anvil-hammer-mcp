@@ -104,3 +104,90 @@ describe("live report", () => {
     expect(cmp.observed).toEqual(["id", "title"]);
   });
 });
+
+describe("live-test harness guard, write mode", () => {
+  function writeSetup() {
+    const sent: string[] = [];
+    const recorded: string[] = [];
+    const removed: string[] = [];
+    let n = 0;
+    const inner = (async (input: string | URL, init: RequestInit = {}) => {
+      const u = new URL(String(input));
+      sent.push(`${init.method ?? "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/world/articles")) {
+        return new Response(
+          JSON.stringify({ success: true, entities: [{ id: "article-in-test-0001" }] }),
+        );
+      }
+      if (init.method === "PUT")
+        return new Response(JSON.stringify({ id: `created-${++n}`, title: "x" }));
+      return new Response("{}");
+    }) as typeof fetch;
+    const ledgerIds = new Set(["ledger-timeline-0001"]);
+    const ledger = {
+      has: (id: string) => ledgerIds.has(id),
+      record: (_t: string, id: string) => {
+        recorded.push(id);
+        ledgerIds.add(id);
+      },
+      remove: (id: string) => {
+        removed.push(id);
+        ledgerIds.delete(id);
+      },
+    };
+    const g = createGuardedFetch(inner, { testWorldId: TEST_WORLD, ledger, readOnly: false });
+    const put = (path: string, body: unknown) =>
+      g.fetch(`${B}/${path}`, { method: "PUT", body: JSON.stringify(body) });
+    return { ...g, sent, recorded, removed, put };
+  }
+
+  it("accepts a create that names the test world, and records it in the ledger", async () => {
+    const g = writeSetup();
+    await g.put("article", { title: "MCP-TEST-a", world: { id: TEST_WORLD } });
+    expect(g.recorded).toEqual(["created-1"]);
+    await g.fetch(`${B}/article?id=created-1`, { method: "PATCH", body: "{}" });
+    expect(g.sent).toHaveLength(2);
+  });
+
+  it("accepts a create without world whose parent is in the ledger or discovered", async () => {
+    const g = writeSetup();
+    await g.put("history", {
+      title: "MCP-TEST-event",
+      timelines: [{ id: "ledger-timeline-0001" }],
+    });
+    await g.fetch(`${B}/world/articles?id=${TEST_WORLD}`, { method: "POST", body: "{}" });
+    await g.put("secret", { title: "MCP-TEST-secret", article: { id: "article-in-test-0001" } });
+    expect(g.recorded).toEqual(["created-1", "created-2"]);
+  });
+
+  it.each([
+    ["no world and no parent", { title: "MCP-TEST-x" }],
+    [
+      "a parent that is not known to be in the test world",
+      { title: "MCP-TEST-x", article: { id: "article-elsewhere-0001" } },
+    ],
+    ["another world", { title: "MCP-TEST-x", world: { id: "world-other-0002" } }],
+    [
+      "another world even with a known parent",
+      {
+        title: "MCP-TEST-x",
+        world: { id: "world-other-0002" },
+        timelines: [{ id: "ledger-timeline-0001" }],
+      },
+    ],
+    ["a title without the prefix", { title: "Real", world: { id: TEST_WORLD } }],
+  ])("refuses a create with %s before sending it", async (_label, body) => {
+    const g = writeSetup();
+    await expect(g.put("secret", body)).rejects.toThrow(HarnessError);
+    expect(g.sent).toHaveLength(0);
+  });
+
+  it("removes deleted elements from the ledger", async () => {
+    const g = writeSetup();
+    await g.fetch(`${B}/timeline?id=ledger-timeline-0001`, { method: "DELETE" });
+    expect(g.removed).toEqual(["ledger-timeline-0001"]);
+    await expect(
+      g.fetch(`${B}/timeline?id=ledger-timeline-0001`, { method: "DELETE" }),
+    ).rejects.toThrow(/not in the ledger/);
+  });
+});
