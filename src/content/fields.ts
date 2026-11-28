@@ -1,7 +1,7 @@
 /** Apply the BBCode → Markdown view to the text fields of an element (read path). */
 import type { Json } from "../api/client.js";
 import { getType } from "../registry/index.js";
-import { knownFields } from "../write/fields.js";
+import { isTextField } from "../write/fields.js";
 import { bbcodeToMarkdown } from "./bbcode.js";
 
 export interface ElementView {
@@ -16,11 +16,10 @@ export interface ElementView {
 export function elementToMarkdown(type: string, element: Json): ElementView {
   const def = getType(type);
   const template = typeof element.templateType === "string" ? element.templateType : undefined;
-  const known = knownFields(def, template);
   const out: Json = { ...element };
   const view: ElementView = { element: out, converted: [], placeholders: false, rawFallback: [] };
   for (const [k, v] of Object.entries(element)) {
-    if (typeof v !== "string" || v === "" || !known[k]?.bbcode) continue;
+    if (typeof v !== "string" || v === "" || !isTextField(def, template, k)) continue;
     const md = bbcodeToMarkdown(v);
     out[k] = md.markdown;
     view.converted.push(k);

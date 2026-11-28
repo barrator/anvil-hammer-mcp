@@ -33,6 +33,14 @@ export function knownFields(def: TypeDef, template?: string): Record<string, Fie
   return { ...def.fields, ...(t?.def?.fields ?? {}) };
 }
 
+/** Is `name` a BBCode text field for this type and template? */
+export function isTextField(def: TypeDef, template: string | undefined, name: string): boolean {
+  return (
+    knownFields(def, template)[name]?.bbcode === true ||
+    (def.textFieldNames?.includes(name) ?? false)
+  );
+}
+
 export interface ValidationResult {
   /** Body to send: computed fields removed. */
   body: Json;

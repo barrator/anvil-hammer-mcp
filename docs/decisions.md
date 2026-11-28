@@ -55,3 +55,8 @@ One line per decision: date, decision, reason. Newest at the bottom.
 | 2026-11-28 | `append` separator: the editor's block separator (`\n`) in paragraph fields, a blank line in plain fields, none when the field already ends with a newline | One new paragraph, in the field's own layout |
 | 2026-11-28 | Replacing a non-empty text field needs `replace_fields` (list) in `wa_update` and `wa_update_article`; restore is exempt | Confirmation is per field, explicit |
 | 2026-11-28 | Only mentions new to a field are checked against the world, with the per-session resolver cache | Existing mentions were already there; each target is read once |
+| 2026-11-28 | A field's layout (mode plus leading/trailing blank characters) is taken from its current text on write | Fields end with a newline in the editor's form; keeping it keeps the field in paragraph mode and byte-identical |
+| 2026-11-28 | The editor's lists `[ul]\n- …\n-- …\n[/ul]` ⇄ two-level Markdown lists; headings with an id ⇄ `# Title {#id}` | Most frequent remaining placeholders in real worlds; readability without losing a byte |
+| 2026-11-28 | Sidebar lines are only the exact `--Key::Value--`; `-` is escaped only at a line start where it would make a list | List sub-items look like sidebar lines; French dialogue dashes must stay readable |
+| 2026-11-28 | `history` treated as a text field for every article template (`textFieldNames`), without making it valid for probed templates | Seen with BBCode in unprobed templates; conversion must not loosen strict template validation |
+| 2026-11-28 | The BBCode probe reports, per plain-mode field, the rule that blocked paragraph mode, and the kinds of remaining placeholders | Readability work must be driven by real data, still without content |

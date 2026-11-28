@@ -9,12 +9,12 @@ import {
   markdownToBbcode,
   mentionsIn,
   missingStructure,
-  writeModeFor,
+  writeLayoutFor,
 } from "../content/bbcode.js";
 import { REGISTRY } from "../registry/index.js";
 import type { TypeDef } from "../registry/types.js";
 import { ToolError } from "../tools/context.js";
-import { knownFields } from "./fields.js";
+import { isTextField, knownFields } from "./fields.js";
 
 export type TextFormat = "markdown" | "bbcode";
 
@@ -38,6 +38,7 @@ export interface PreparedText {
 
 /** Separator before appended text: a blank line in Markdown terms. */
 export function appendSeparator(current: string, mode: "paragraph" | "plain"): string {
+  // Paragraph fields: the editor's block separator, which a trailing newline already provides.
   if (current === "") return "";
   if (mode === "paragraph") return current.endsWith("\n") ? "" : "\n"; // the editor separates blocks by "\n"
   if (current.endsWith("\n\n")) return "";
@@ -65,13 +66,14 @@ export function prepareText(
     typeof current?.[k] === "string" ? (current[k] as string) : "";
 
   for (const [k, v] of Object.entries(input)) {
-    if (typeof v !== "string" || !known[k]?.bbcode) continue;
+    if (typeof v !== "string" || !isTextField(def, template, k)) continue;
     const cur = currentText(k);
     let bb: string;
     if (o.textFormat === "markdown") {
       // The Markdown the server showed for this text, sent back unchanged: keep the bytes.
       if (current && cur !== "" && v === bbcodeToMarkdown(cur).markdown) bb = cur;
-      else bb = markdownToBbcode(v, writeModeFor(current ? cur : undefined));
+      // The field keeps its own layout (mode and blank characters around it).
+      else bb = markdownToBbcode(v, writeLayoutFor(current ? cur : undefined));
     } else bb = v;
 
     if (current && bb === cur) {
@@ -97,7 +99,7 @@ export function prepareText(
   }
 
   for (const [k, v] of Object.entries(o.append ?? {})) {
-    if (!known[k]?.bbcode) {
+    if (!isTextField(def, template, k)) {
       const textFields = Object.entries(known)
         .filter(([, f]) => f.bbcode)
         .map(([n]) => n)
@@ -109,10 +111,11 @@ export function prepareText(
     if (k in input)
       throw new ToolError(`"${k}" is given both as a field and in append; use one or the other.`);
     const cur = currentText(k);
-    const mode = writeModeFor(cur);
-    const add = o.textFormat === "markdown" ? markdownToBbcode(v, mode) : v;
-    if (add === "") throw new ToolError(`Nothing to append to "${k}".`);
-    body[k] = cur + appendSeparator(cur, mode) + add;
+    const layout = writeLayoutFor(cur);
+    // Appended blocks end like the field did (e.g. the editor's trailing newline).
+    const add = o.textFormat === "markdown" ? markdownToBbcode(v, { ...layout, lead: "" }) : v;
+    if (add.trim() === "") throw new ToolError(`Nothing to append to "${k}".`);
+    body[k] = cur + appendSeparator(cur, layout.mode) + add;
     appendedPrefixes[k] = cur;
   }
 
@@ -167,10 +170,9 @@ export function newMentions(
   body: Json,
   current: Json | undefined,
 ): { field: string; type: string; id: string }[] {
-  const known = knownFields(def, template);
   const out: { field: string; type: string; id: string }[] = [];
   for (const [k, v] of Object.entries(body)) {
-    if (typeof v !== "string" || !known[k]?.bbcode) continue;
+    if (typeof v !== "string" || !isTextField(def, template, k)) continue;
     const before = new Set(
       mentionsIn(typeof current?.[k] === "string" ? (current[k] as string) : "").map(
         (m) => `${m.type}:${m.id}`,

@@ -4,7 +4,7 @@ import {
   markdownToBbcode,
   mentionsIn,
   missingStructure,
-  writeModeFor,
+  writeLayoutFor,
 } from "../src/content/bbcode.js";
 
 const U = "0a1b2c3d-1111-2222-3333-444455556666";
@@ -13,7 +13,7 @@ const NNBSP = "\u202f";
 
 const roundTrip = (bb: string) => {
   const v = bbcodeToMarkdown(bb);
-  return markdownToBbcode(v.markdown, v.mode);
+  return markdownToBbcode(v.markdown, v.layout);
 };
 
 /** Invented texts covering the forms seen live and the awkward cases. */
@@ -56,6 +56,25 @@ const FIXTURES: Record<string, string> = {
   "bare mention-like text": "[p]@[pas une mention] et @[x](pas:)[/p]",
   "only text": "Bonjour",
   "url and image": "[p][url:https://example.invalid]lien[/url] [img:123|left][/p]",
+  "unknown heading parameter": "[h2|not an id]T[/h2]\n[p]x[/p]",
+  dashes: "[p]Il vint — enfin — en 1914–1918 ; – réplique.[/p]",
+  "list, two levels, trailing spaces":
+    "[p]Avant[/p]\n[ul]\n- élément \n-- sous-élément : valeur\n- élément [b]gras[/b]\n[/ul]\n[p]Après[/p]",
+  "list alone": "[ul]\n- a\n- b\n[/ul]",
+  "empty list item": "[ul]\n- \n- b\n[/ul]",
+  "list with an odd line": "[ul]\n- a\nsans tiret\n[/ul]",
+  "unclosed list": "[ul]\n- a\n- b",
+  "list sub-item next to a sidebar line":
+    "[ul]\n-- nom : valeur\n-- Clé::Valeur--\n[/ul]\n--Clé::Valeur--\n-- nom : valeur",
+  "several line breaks in a paragraph": "[p]un[br]deux[br]trois[br]quatre[/p]",
+  "heading after a paragraph": "[p]a[/p]\n[h2]Titre[/h2]\n[p]b[/p]",
+  "heading right after [/p] on the same line": "[p]a[/p][h2]Titre[/h2]",
+  "empty paragraphs interleaved": "[p]a[/p]\n[p][/p]\n[p]b[/p]\n[p][/p]\n[p][/p]\n[p]c[/p]",
+  "trailing newline after paragraphs": "[p]a[/p]\n[p][/p]\n[p]b[/p]\n",
+  "leading and trailing blank lines": "\n\n[p]a[/p]\n\n",
+  "paragraph starting with a dash":
+    "[p]- dialogue[/p]\n[p]Intro[br]- point[/p]\n[p]-- pas une liste[/p]",
+  "heading text ending like an id": "[h2]T {#abc}[/h2]",
   "sidebar lines between paragraphs":
     "[p]Intro[/p]\n--Population::12--\n--Ruler::Invented--\n[p]Fin[/p]",
   "sidebar line inside a paragraph": "[p]--Population::12--[br]--Ruler::Invented--[/p]",
@@ -111,6 +130,18 @@ describe("BBCode → Markdown → BBCode is byte-identical", () => {
       "[section:x]",
       "--K::V--",
       "\r\n",
+      "[ul]",
+      "[/ul]",
+      "\n- ",
+      "\n-- ",
+      "- ",
+      "  - ",
+      "—",
+      "–",
+      `[h2|${U}]`,
+      " {#a}",
+      "[p][/p]",
+      "-- nom : x",
     ];
     let seed = 42;
     const rand = () => {
@@ -159,13 +190,77 @@ describe("readable Markdown for the editor's forms", () => {
     expect(bbcodeToMarkdown("[p]a *b* c[/p]").markdown).toBe("a \\*b\\* c");
   });
 
-  it("keeps unknown tags and heading ids as placeholders", () => {
+  it("keeps unknown tags and unknown heading parameters as placeholders", () => {
     expect(bbcodeToMarkdown(FIXTURES["unknown tags"]!).markdown).toBe(
       "⟦[section:lead]⟧Intro ⟦[u]⟧souligné⟦[/u]⟧⟦[/section]⟧ et ⟦[container:box]⟧x⟦[/container]⟧",
     );
-    expect(bbcodeToMarkdown(FIXTURES["heading with an id"]!).markdown).toBe(
-      `⟦[h1|${U}]Titre[/h1]⟧\n\nTexte.`,
+    expect(bbcodeToMarkdown(FIXTURES["unknown heading parameter"]!).markdown).toBe(
+      "⟦[h2|not an id]T[/h2]⟧\n\nx",
     );
+  });
+
+  it("headings with an id keep it exactly", () => {
+    expect(bbcodeToMarkdown(FIXTURES["heading with an id"]!).markdown).toBe(
+      `# Titre {#${U}}\n\nTexte.`,
+    );
+    expect(markdownToBbcode(`## Titre {#${U}}`, "paragraph")).toBe(`[h2|${U}]Titre[/h2]`);
+    expect(markdownToBbcode("## Titre", "paragraph")).toBe("[h2]Titre[/h2]");
+  });
+
+  it("the editor's lists become two-level Markdown lists, trailing spaces kept", () => {
+    const v = bbcodeToMarkdown(FIXTURES["list, two levels, trailing spaces"]!);
+    expect(v.mode).toBe("paragraph");
+    expect(v.markdown).toBe(
+      "Avant\n\n- élément \n  - sous-élément : valeur\n- élément **gras**\n\nAprès",
+    );
+    expect(markdownToBbcode("- un\n  - deux\n- trois", "paragraph")).toBe(
+      "[ul]\n- un\n-- deux\n- trois\n[/ul]",
+    );
+  });
+
+  it("a list sub-item is never taken for a sidebar line, and the reverse", () => {
+    const bb = FIXTURES["list sub-item next to a sidebar line"]!;
+    expect(roundTrip(bb)).toBe(bb);
+    const v = bbcodeToMarkdown("[ul]\n-- nom : valeur\n-- Clé::Valeur--\n[/ul]\n--Clé::Valeur--");
+    expect(v.markdown).toBe("  - nom : valeur\n  - Clé::Valeur--\n\n--Clé::Valeur--");
+    expect(markdownToBbcode("--Clé::Valeur--", "paragraph")).toBe("--Clé::Valeur--");
+    expect(markdownToBbcode("-- nom : valeur", "paragraph")).toBe("[p]-- nom : valeur[/p]");
+  });
+
+  it("interleaved empty paragraphs stay on their own lines without leaving paragraph mode", () => {
+    const v = bbcodeToMarkdown(FIXTURES["empty paragraphs interleaved"]!);
+    expect(v.mode).toBe("paragraph");
+    expect(v.markdown).toBe("a\n\n⟦[p][/p]⟧\n\nb\n\n⟦[p][/p]⟧\n\n⟦[p][/p]⟧\n\nc");
+  });
+
+  it("a trailing newline keeps the field in paragraph mode and is put back on write", () => {
+    const v = bbcodeToMarkdown(FIXTURES["trailing newline after paragraphs"]!);
+    expect(v.mode).toBe("paragraph");
+    expect(v.layout.trail).toBe("\n");
+    expect(v.markdown).toBe("a\n\n⟦[p][/p]⟧\n\nb");
+  });
+
+  it("escapes a dash only where it would start a list", () => {
+    expect(bbcodeToMarkdown(FIXTURES["paragraph starting with a dash"]!).markdown).toBe(
+      "\\- dialogue\n\nIntro\n- point\n\n-- pas une liste",
+    );
+  });
+
+  it("several line breaks and dashes read naturally", () => {
+    expect(bbcodeToMarkdown(FIXTURES["several line breaks in a paragraph"]!).markdown).toBe(
+      "un\ndeux\ntrois\nquatre",
+    );
+    expect(bbcodeToMarkdown(FIXTURES["dashes"]!).markdown).toBe(
+      "Il vint — enfin — en 1914–1918 ; – réplique.",
+    );
+  });
+
+  it("reports why a field stays in plain mode", () => {
+    expect(bbcodeToMarkdown("Ligne\nLigne").fallbackReason).toBe("no-block-tags");
+    expect(bbcodeToMarkdown("[p]a[/p]\ntexte libre").fallbackReason).toBe("line-outside-blocks");
+    expect(bbcodeToMarkdown("[p]a[/p]\n\n[p]b[/p]").fallbackReason).toBe("empty-line");
+    expect(bbcodeToMarkdown("[ul]\n- a").fallbackReason).toBe("unclosed-list");
+    expect(bbcodeToMarkdown("[p]a[/p]").fallbackReason).toBeUndefined();
   });
 
   it("plain fields keep their lines and sidebar key-value lines untouched", () => {
@@ -201,11 +296,11 @@ describe("new Markdown is written in the editor's form", () => {
     expect(markdownToBbcode("⟦[section:a]\n\nx⟧", "paragraph")).toBe("[section:a]\n\nx");
   });
 
-  it("chooses the write mode from the field's current text", () => {
-    expect(writeModeFor(undefined)).toBe("paragraph");
-    expect(writeModeFor("")).toBe("paragraph");
-    expect(writeModeFor("[p]a[/p]")).toBe("paragraph");
-    expect(writeModeFor("Ligne\n--K::V--")).toBe("plain");
+  it("chooses the write layout from the field's current text", () => {
+    expect(writeLayoutFor(undefined)).toEqual({ mode: "paragraph", lead: "", trail: "" });
+    expect(writeLayoutFor("")).toEqual({ mode: "paragraph", lead: "", trail: "" });
+    expect(writeLayoutFor("[p]a[/p]\n")).toEqual({ mode: "paragraph", lead: "", trail: "\n" });
+    expect(writeLayoutFor("Ligne\n--K::V--").mode).toBe("plain");
   });
 });
 

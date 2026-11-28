@@ -33,7 +33,7 @@ Types covered so far: world, article, category, secret, subscriber group, timeli
 
 ### Text: Markdown and BBCode
 
-Text fields are shown and written as Markdown: paragraphs separated by a blank line, a line break inside a paragraph, `**bold**`, `*italic*`, `#` headings, and mentions as `@[Title](Article:<id>)`. Anything else (World Anvil tags, empty paragraphs, unusual layouts) appears as a `⟦…⟧` placeholder holding the original BBCode: keep it unchanged and it is written back exactly. Reading then writing back an unchanged text gives byte-identical BBCode. Pass `format: "bbcode"` to read raw BBCode and `raw_bbcode: true` to write it.
+Text fields are shown and written as Markdown: paragraphs separated by a blank line, a line break inside a paragraph, `**bold**`, `*italic*`, `#` headings (an editor heading id shows as `{#id}`), lists with `- ` and ` -` (two levels), and mentions as `@[Title](Article:<id>)`. Anything else (World Anvil tags, empty paragraphs, unusual layouts) appears as a `⟦…⟧` placeholder holding the original BBCode: keep it unchanged and it is written back exactly. Reading then writing back an unchanged text gives byte-identical BBCode. Pass `format: "bbcode"` to read raw BBCode and `raw_bbcode: true` to write it.
 
 To add text, use `append` on `wa_update_article`: it adds at the end of a field without rewriting it. Replacing the whole text of a non-empty field needs `replace_fields: ["content"]`, and the result lists any tags, mentions or key-value lines that disappeared.
 

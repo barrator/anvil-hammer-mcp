@@ -146,7 +146,7 @@ export interface Inventory {
   typography: Counter;
   placeholderChars: number;
   lists: { itemSeparators: Counter };
-  /** String fields not flagged BBCode in the registry that contain a known tag. */
+  /** "template.field" (or "type.field") of string fields not flagged BBCode that contain a known tag. */
   unflaggedFieldsWithTags: Counter;
   /** Never paste: may contain the owner's words. */
   localOnly: { unknownTagNames: Counter };

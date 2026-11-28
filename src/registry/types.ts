@@ -109,6 +109,12 @@ export interface TypeDef {
   createDefaults?: Record<string, unknown>;
   /** Article only: template-specific fields. */
   templates?: Record<string, TemplateDef>;
+  /**
+   * Field names that hold BBCode whatever the template, even when the
+   * template's fields are not in the registry (seen live). Used to convert
+   * text; it does not make a field valid for a probed template.
+   */
+  textFieldNames?: string[];
   /** Things the API cannot do or does surprisingly for this type. */
   quirks: string[];
 }

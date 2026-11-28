@@ -17,6 +17,7 @@ import { REGISTRY } from "../src/registry/index.js";
 import { bbcodeToMarkdown, markdownToBbcode } from "../src/content/bbcode.js";
 import { knownFields } from "../src/write/fields.js";
 import {
+  KNOWN_TAGS,
   emptyInventory,
   scanBbcodeField,
   scanUnflaggedField,
@@ -59,6 +60,21 @@ describe("BBCode probe", () => {
       withPlaceholders: 0,
       shownWholeRaw: 0,
       differentFields: {} as Counter,
+      /** "field: reason" for each field left in plain mode (rule names only). */
+      plainModeReasons: {} as Counter,
+      /** What the remaining ⟦…⟧ placeholders hold, by kind (known WA tag names only). */
+      placeholderKinds: {} as Counter,
+    };
+    const inc = (c: Counter, k: string) => (c[k] = (c[k] ?? 0) + 1);
+    /** Kind of a placeholder, without its content. */
+    const kindOf = (raw: string): string => {
+      if (raw === "[p][/p]") return "empty paragraph";
+      if (/^\[h[1-6]\|/.test(raw)) return "heading with a parameter";
+      if (raw.startsWith("[ul]")) return "list in another layout";
+      if (/^\[p\]/.test(raw) && /\[\/p\]$/.test(raw)) return "paragraph that did not convert";
+      const tag = /^\[\/?([A-Za-z][A-Za-z0-9_-]{0,30})/.exec(raw)?.[1]?.toLowerCase();
+      if (tag) return KNOWN_TAGS.has(tag) ? `tag [${tag}]` : "unknown tag";
+      return raw.includes("\n") ? "multi-line block" : "other";
     };
     const checkRoundTrip = (field: string, bb: string) => {
       if (bb === "") return;
@@ -66,7 +82,10 @@ describe("BBCode probe", () => {
       roundTrip.modes[v.mode] = (roundTrip.modes[v.mode] ?? 0) + 1;
       if (v.hasPlaceholders) roundTrip.withPlaceholders++;
       if (v.rawFallback) roundTrip.shownWholeRaw++;
-      if (markdownToBbcode(v.markdown, v.mode) === bb) roundTrip.identical++;
+      if (v.fallbackReason) inc(roundTrip.plainModeReasons, `${field}: ${v.fallbackReason}`);
+      for (const raw of v.rawFallback ? [] : v.placeholderRaws)
+        inc(roundTrip.placeholderKinds, kindOf(raw));
+      if (markdownToBbcode(v.markdown, v.layout) === bb) roundTrip.identical++;
       else {
         roundTrip.different++;
         roundTrip.differentFields[field] = (roundTrip.differentFields[field] ?? 0) + 1;
@@ -98,7 +117,7 @@ describe("BBCode probe", () => {
           if (fields[name]?.bbcode) {
             scanBbcodeField(inv, type, name, value);
             checkRoundTrip(name, value);
-          } else scanUnflaggedField(inv, name, value);
+          } else scanUnflaggedField(inv, `${template ?? type}.${name}`, value);
         }
       }
     }

@@ -125,6 +125,8 @@ const BASE: Record<string, TypeDef> = {
       histories: spec("refs", { refType: "history" }),
       editURL: spec("string", { writable: false }),
     },
+    // Stage C probe, second world: "history" held BBCode in 10 articles of templates not yet probed.
+    textFieldNames: ["history"],
     templates: {
       location: {
         description: "Location template (the only template the spec documents). Not probed yet.",
