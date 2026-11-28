@@ -12,9 +12,11 @@ secrets/
 access.json
 access.*.json
 
-# Live tests: real world id and ledger stay local
-live-test.config.json
-live-test.ledger.json
+# Live tests: real world ids, ledgers and reports stay local (any live-test*.json
+# or live-*-report.json), except the example config.
+live-test*.json
+live-*-report.json
+!live-test.config.example.json
 live-test-report.json
 live-template-report.json
 live-write-report.json
