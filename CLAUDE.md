@@ -91,7 +91,7 @@ Offline tests (`npm test`) never touch the network. Live tests (`npm run test:li
 
 - Config: `live-test.config.json` (gitignored), `{"testWorldId": "...", "ledgerFile": "live-test.ledger.json"}`; path overridable with `WA_LIVE_CONFIG`.
 - Keys: files only, `WA_APP_KEY_FILE` and `WA_AUTH_TOKEN_FILE`.
-- Commands: `npm run test:live` (stage A read), `test:live:templates` (template probe, read-only), `test:live:write` (stage B writes, deletes what it created), `test:live:cleanup` (deletes everything in the ledger). Prefix each with `WA_APP_KEY_FILE=... WA_AUTH_TOKEN_FILE=...`.
+- Commands: `npm run test:live` (stage A read), `test:live:templates` (template probe, read-only), `test:live:write` (stage B writes, deletes what it created), `test:live:cleanup` (deletes everything in the ledger), `test:live:bbcode` (stage C BBCode probe, read-only; its `localOnly` section may hold the owner's words and is never pasted). Prefix each with `WA_APP_KEY_FILE=... WA_AUTH_TOKEN_FILE=...`.
 - Write mode: a `PUT` must prove it targets the test world (`world.id`, or a parent in the ledger or discovered in the test world); created elements are recorded in the ledger automatically; `PATCH`/`DELETE` only on ledger elements.
 - Output: `live-test-report.json` (gitignored) and a printed summary holding structure only (field names, counts, pass/fail), safe to paste in a PR. Check details are sanitized: IDs and UUIDs are masked.
 - Any failed check, including checks made in `afterAll` (cleanup, harness refusals), fails the run.

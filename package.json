@@ -26,7 +26,8 @@
     "test:live": "vitest run --config vitest.live.config.ts live/read.live.test.ts",
     "test:live:templates": "vitest run --config vitest.live.config.ts live/template-probe.live.test.ts",
     "test:live:write": "vitest run --config vitest.live.config.ts live/write.live.test.ts",
-    "test:live:cleanup": "vitest run --config vitest.live.config.ts live/cleanup.live.test.ts"
+    "test:live:cleanup": "vitest run --config vitest.live.config.ts live/cleanup.live.test.ts",
+    "test:live:bbcode": "vitest run --config vitest.live.config.ts live/bbcode-probe.live.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
