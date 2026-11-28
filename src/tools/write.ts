@@ -142,7 +142,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       inputSchema: { type: z.enum(writableTypes), data, raw_bbcode: rawBbcode, dry_run: dryRun },
       annotations: WRITE,
     },
-    handler(ctx, async ({ type, data, raw_bbcode, dry_run }, state) =>
+    handler(ctx, "wa_create", async ({ type, data, raw_bbcode, dry_run }, state) =>
       render(
         ctx,
         await createElement(ctx, state, {
@@ -177,6 +177,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
     },
     handler(
       ctx,
+      "wa_update",
       async (
         { type, id, data, raw_bbcode, replace_fields, expected_update_date, dry_run },
         state,
@@ -226,7 +227,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       },
       annotations: WRITE,
     },
-    handler(ctx, async (a, state) => {
+    handler(ctx, "wa_create_article", async (a, state) => {
       const template = a.template.toLowerCase();
       const body: Json = {
         ...(a.fields ?? {}),
@@ -282,7 +283,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
       },
       annotations: WRITE,
     },
-    handler(ctx, async (a, state) => {
+    handler(ctx, "wa_update_article", async (a, state) => {
       const body: Json = { ...(a.fields ?? {}), ...linkFields(a.links) };
       if (a.title) body.title = a.title;
       if (a.category_id) body.category = { id: a.category_id };
@@ -332,6 +333,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
     },
     handler(
       ctx,
+      "wa_restore",
       async (
         { type, id, backup_id, scan_links, restore_public, expected_update_date, dry_run },
         state,
@@ -386,7 +388,7 @@ export function registerWriteTools(server: McpServer, ctx: WriteContext) {
         },
         annotations: DESTRUCTIVE,
       },
-      handler(ctx, async ({ type, id, expected_update_date, dry_run }, state) =>
+      handler(ctx, "wa_delete", async ({ type, id, expected_update_date, dry_run }, state) =>
         render(
           ctx,
           await deleteElement(ctx, state, {

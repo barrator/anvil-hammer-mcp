@@ -97,7 +97,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
       inputSchema: { fields: fieldsSchema },
       annotations: READ_ONLY,
     },
-    handler(ctx, async ({ fields }, state) => {
+    handler(ctx, "wa_list_worlds", async ({ fields }, state) => {
       const me = await ctx.client.request<Json>("GET", "identity");
       const userId = typeof me.id === "string" ? me.id : undefined;
       if (!userId) throw new ToolError("World Anvil did not return a user id for this token.");
@@ -129,7 +129,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    handler(ctx, async ({ type, template }) => {
+    handler(ctx, "wa_describe", async ({ type, template }) => {
       if (!type) {
         const types = Object.values(REGISTRY).map((t) => ({
           type: t.name,
@@ -188,7 +188,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
       },
       annotations: READ_ONLY,
     },
-    handler(ctx, async ({ type, id, granularity, fields, format }, state) => {
+    handler(ctx, "wa_get", async ({ type, id, granularity, fields, format }, state) => {
       const t = getType(type);
       const g = granularity ?? t.defaultGranularity;
       if (!t.granularities.includes(g)) {
@@ -248,7 +248,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
       },
       annotations: READ_ONLY,
     },
-    handler(ctx, async ({ type, parent_id, fields, offset, format }, state) => {
+    handler(ctx, "wa_list", async ({ type, parent_id, fields, offset, format }, state) => {
       const t = getType(type);
       if (type === "world") throw new ToolError("Use wa_list_worlds to list worlds.");
       if (!t.list) throw new ToolError(`Type ${type} cannot be listed.`);
@@ -288,6 +288,7 @@ export function registerReadTools(server: McpServer, ctx: ToolContext) {
     },
     handler(
       ctx,
+      "wa_list_articles",
       async ({ world_id, category_id, template, tag, fields, offset, format }, state) => {
         const extra = category_id ? { category: { id: category_id } } : {};
         const { items, complete } = await listWorldArticles(ctx, state, world_id, extra);

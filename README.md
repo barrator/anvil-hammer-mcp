@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant read and enrich **its owner's own** [World Anvil](https://www.worldanvil.com) worlds, safely.
 
-> **Status: work in progress.** Stage C: safe reads and writes with Markdown text, stdio only.
+> **Status: work in progress.** Stage D: safe reads and writes with Markdown text, locally (stdio) or self-hosted as a Claude connector (HTTP, OAuth, Docker).
 
 ## What it does today
 
@@ -47,7 +47,7 @@ All content read from World Anvil is returned inside an `<untrusted_world_conten
 
 ## Requirements
 
-- Node.js 22 or newer.
+- Node.js 24 or newer (the Docker image uses Node.js 26).
 - Your own World Anvil **application key** and **user token**. Each installation uses its owner's keys; this project never proxies or shares them.
 
 ## Configuration
@@ -63,7 +63,7 @@ All content read from World Anvil is returned inside an `<untrusted_world_conten
 | `WA_BACKUP_RETENTION_DAYS`    | Optional backup retention. Default 90.                                                                      |
 | `WA_ENABLE_DELETE`            | `true` exposes `wa_delete`. Default `false`.                                                                |
 
-The server refuses to start if a key is missing.
+The server refuses to start if a key is missing, or if a key file is readable or writable by other users (use `chmod 600`).
 
 ### Access levels
 
@@ -97,6 +97,36 @@ claude mcp add world-anvil \
   -- node /path/to/anvil-hammer-mcp/dist/index.js
 ```
 
+## Hosted mode (Claude connector)
+
+`anvil-hammer-mcp http` serves the same tools over MCP Streamable HTTP, with a built-in single-user OAuth authorization server. It is meant to run in the provided Docker setup behind a TLS reverse proxy, so Claude on the web, desktop, mobile and Claude Code can use it as a custom connector. **Step by step: [docs/deployment.md](docs/deployment.md).**
+
+- **Sign-in:** a passphrase page. The secret file holds only a scrypt hash (`anvil-hammer-mcp hash-passphrase`); wrong attempts are limited per address and in total.
+- **Clients:** Claude's published identity (Client ID Metadata Documents, from `claude.ai` only) and optional pre-registered public clients (`add-client`). No dynamic client registration.
+- **Tokens:** PKCE S256 only, `iss` in the authorization response, access tokens of 30 minutes, refresh tokens rotated at each use (reuse revokes the sign-in), `revoke-all` to cut every sign-in. Every MCP request without a valid token gets a 401 before any tool runs.
+- **Container:** non-root, read-only, no capabilities, resource limits, keys as files only. The server has no internet access: a gateway lets it reach `www.worldanvil.com` and `claude.ai` over HTTPS and nothing else.
+- **Health:** `/healthz` (no World Anvil call) and `/healthz/worldanvil` (needs a token). A technical log (tool, world, element ID, duration, result; sign-in events with the client address; never content or keys) is kept 180 days.
+
+Commands: `http`, `hash-passphrase`, `add-client`, `revoke-all`, `check` (tests the World Anvil connection), `egress-check` (shows what the machine can reach). `anvil-hammer-mcp --help` lists them.
+
+Hosted-mode variables (the compose file sets them):
+
+| Variable                 | Purpose                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `WA_PUBLIC_URL`          | Public https origin of the server (no path). The MCP URL is this followed by `/mcp`.       |
+| `WA_PASSPHRASE_FILE`     | File holding the passphrase hash.                                                          |
+| `WA_HTTP_HOST`           | Listening address. Default `127.0.0.1`.                                                    |
+| `WA_HTTP_PORT`           | Listening port. Default 8080.                                                              |
+| `WA_OAUTH_DIR`           | Sign-in state: refresh token hashes, `clients.json`. Default: the user's data folder.      |
+| `WA_OAUTH_CIMD_HOSTS`    | Hosts whose client metadata documents are accepted. Default `claude.ai`; `none` disables.  |
+| `WA_OAUTH_REDIRECT_URIS` | Redirect URIs accepted from those documents. Default: Claude's callback and loopback URIs. |
+| `WA_TRUSTED_PROXY`       | Address whose `X-Forwarded-For` is believed (the gateway). Default: none.                  |
+| `WA_LOG_DIR`             | Technical log folder. Default: the user's data folder.                                     |
+| `WA_LOG_RETENTION_DAYS`  | Technical log retention. Default 180.                                                      |
+| `WA_INDEX_DIR`           | Index folder (checked by `/healthz`; used from a later stage).                             |
+
+In hosted mode the keys come from `WA_APP_KEY_FILE` and `WA_AUTH_TOKEN_FILE` only.
+
 ## Development
 
 ```bash
@@ -116,7 +146,7 @@ Live tests hit the real API, are run by hand and never in CI. They can only touc
    { "testWorldId": "<your test world ID>" }
    ```
    Optional: `"ledgerFile"` (default `live-test.ledger.json`, gitignored), the list of `MCP-TEST-` elements created by tests.
-2. Run with the keys in files:
+2. Run with the keys in files (readable by you only, `chmod 600`):
    ```bash
    WA_APP_KEY_FILE=/path/to/app-key WA_AUTH_TOKEN_FILE=/path/to/auth-token npm run test:live
    ```

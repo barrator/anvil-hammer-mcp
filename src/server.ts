@@ -37,13 +37,21 @@ export function createToolContext(config: Config, deps: ServerDeps = {}): WriteC
   };
 }
 
-export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
+/**
+ * One MCP server on a given tool context. In hosted mode every MCP session gets
+ * its own server, all sharing one context: one World Anvil client (so call
+ * spacing holds across sessions) and one session store (state stays per session).
+ */
+export function createServerForContext(ctx: WriteContext): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
   );
-  const ctx = createToolContext(config, deps);
   registerReadTools(server, ctx);
   registerWriteTools(server, ctx);
   return server;
+}
+
+export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
+  return createServerForContext(createToolContext(config, deps));
 }
