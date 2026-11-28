@@ -3,27 +3,29 @@
  *
  * Guarantee: for every BBCode string `x`, with `v = bbcodeToMarkdown(x)`,
  *   markdownToBbcode(v.markdown, v.layout) === x
- * byte for byte. It holds by construction: every converted block is checked
- * on the spot and falls back to a placeholder `⟦raw BBCode⟧` when converting it
- * back would not give the same bytes; the whole field is checked again at the
- * end, with two last fallbacks (plain mode, then the whole field raw).
+ * byte for byte. It holds by construction: every block is checked on the spot
+ * and falls back to a placeholder `⟦raw BBCode⟧` when converting it back would
+ * not give the same bytes; the whole field is checked again at the end.
  *
- * Converted (the forms the World Anvil editor writes):
- *   [p]…[/p] paragraphs, separated by "\n"   ⇄  paragraphs separated by a blank line
- *   [br] inside a paragraph                   ⇄  a line break inside a paragraph
- *   [b]…[/b]  [i]…[/i]                         ⇄  **…**  *…*
- *   [h1]…[/h1] … [h6], own line                ⇄  # … ######
- *   [h2|<id>]…[/h2]                            ⇄  ## … {#<id>}
- *   [ul]\n- item\n-- sub-item\n[/ul]           ⇄  - item / ␣␣- sub-item
- *   @[Name](Type:id) mentions                  ⇄  unchanged, exact case kept
- *   --Key::Value-- lines, own line             ⇄  unchanged
- * Everything else (unknown tags, tags with other parameters, uppercase
- * spellings, empty paragraphs, odd layouts) becomes a placeholder and is
- * written back exactly. Text, including French typography, is never altered.
+ * A field is a sequence of blocks, one per line (lists span several lines):
+ *   [p]…[/p], separated by "\n"         ⇄  paragraphs separated by a blank line
+ *   [br] inside a paragraph              ⇄  a line break ("\" alone = an empty line)
+ *   [b]…[/b] [i]…[/i] [s]…[/s]           ⇄  **…** *…* ~~…~~
+ *   [hN]…[/hN], [hN|<id>]…[/hN] (1–6)    ⇄  # … ######, "## Title {#<id>}"
+ *   [ul]/[ol] with "- ", "-- ", "--- "   ⇄  "- " lists / "1. " lists, three levels
+ *   [quote]…[/quote] on one line          ⇄  "> …"
+ *   [hr] alone                            ⇄  ---
+ *   --Key::Value-- alone                  ⇄  unchanged
+ *   @[Name](Type:id) mentions             ⇄  unchanged, exact case kept
+ * A run of empty paragraphs is one placeholder ⟦[p][/p]×N⟧. Any other block
+ * that does not convert exactly (tables, centred text, check lists, loose
+ * lines…) becomes ONE placeholder on its own line; the rest of the field stays
+ * readable. Inline tags without a Markdown form ([u], [category:…], [color]…)
+ * are placeholders around readable text. Text and French typography are never
+ * altered. Only a field with no block at all (plain text) is in plain mode.
  *
- * Layout: the mode plus the blank characters around the field. It is taken
- * from the field's current text when writing, so a field keeps its own form
- * (e.g. a trailing newline); new text uses the editor's paragraph form.
+ * Layout: the mode plus the blank characters around the field, taken from the
+ * field's current text when writing, so a field keeps its own form.
  */
 
 export type TextMode = "paragraph" | "plain";
@@ -36,13 +38,8 @@ export interface Layout {
   trail: string;
 }
 
-/** Why a field could not be shown in paragraph mode. Names only, no content. */
-export type FallbackReason =
-  | "no-block-tags"
-  | "line-outside-blocks"
-  | "empty-line"
-  | "unclosed-list"
-  | "paragraph-check-failed";
+/** Why a field is in plain mode. Names only, no content. */
+export type FallbackReason = "no-block-tags" | "no-readable-block" | "paragraph-check-failed";
 
 export interface MarkdownView {
   markdown: string;
@@ -58,22 +55,9 @@ export interface MarkdownView {
   placeholderShapes: string[];
   /** True when the whole field could only be shown raw. */
   rawFallback: boolean;
-  /** Set when the field is in plain mode: why paragraph mode was not possible. */
+  /** Set when the field is in plain mode: why. */
   fallbackReason?: FallbackReason;
-  /** The shape of the line that blocked paragraph mode, as a rule name (no content). */
-  fallbackDetail?: string;
 }
-
-/** Placeholders made while converting, with the rule that required each. */
-interface Collector {
-  raws: string[];
-  shapes: string[];
-}
-const collector = (): Collector => ({ raws: [], shapes: [] });
-const absorb = (into: Collector, from: Collector) => {
-  into.raws.push(...from.raws);
-  into.shapes.push(...from.shapes);
-};
 
 export const PH_OPEN = "⟦";
 export const PH_CLOSE = "⟧";
@@ -87,11 +71,14 @@ export const MENTION_GLOBAL = new RegExp(
   String.raw`@\[([^\]\n]{1,300})\]\(([A-Za-z][A-Za-z0-9_-]{0,40}):([^)\s]{1,100})\)`,
   "g",
 );
+/** Element links written as tags: [category:<id>]…[/category], [timeline:<id>]…, [secret:<id>], [img:<id>|…]. */
+const TAG_LINK_GLOBAL =
+  /\[(category|timeline|secret|img):([A-Za-z0-9-]{1,100})(?:\|[^\]\n]{0,100})?\]/g;
 /** A BBCode tag token (open, close or self-closing, with optional parameter). */
 const TAG_AT = /^\[\/?[A-Za-z][A-Za-z0-9_-]{0,30}(?:[:=|][^\]\n]{0,300})?(?:\s*\/)?\]/;
 
 /** Characters the Markdown side treats specially after a backslash. */
-const ESCAPABLE = new Set(["\\", "*", PH_OPEN, PH_CLOSE, "#", "-"]);
+const ESCAPABLE = new Set(["\\", "*", "~", PH_OPEN, PH_CLOSE, "#", "-", ".", ">", "×"]);
 
 /**
  * A sidebar key-value line, displayed by World Anvil as "Key: Value". Only the
@@ -100,26 +87,55 @@ const ESCAPABLE = new Set(["\\", "*", PH_OPEN, PH_CLOSE, "#", "-"]);
  */
 export const SIDEBAR_LINE = /^--[^\s:-][^\n]*?::[^\n]*?--$/;
 
+const EMPTY_P = "[p][/p]";
+
 // ---------------------------------------------------------------------------
 // Placeholders
+
+/** Placeholders made while converting, with the rule that required each. */
+interface Collector {
+  raws: string[];
+  shapes: string[];
+}
+const collector = (): Collector => ({ raws: [], shapes: [] });
+const absorb = (into: Collector, from: Collector) => {
+  into.raws.push(...from.raws);
+  into.shapes.push(...from.shapes);
+};
 
 function placeholder(raw: string, c: Collector, shape: string): string {
   c.raws.push(raw);
   c.shapes.push(shape);
-  return PH_OPEN + raw.replace(/[\\⟧]/g, (c) => "\\" + c) + PH_CLOSE;
+  return PH_OPEN + raw.replace(/[\\⟧×]/g, (ch) => "\\" + ch) + PH_CLOSE;
 }
+
+/** A run of N ≥ 2 empty paragraphs, written compactly. */
+function emptyRunPlaceholder(n: number, c: Collector): string {
+  c.raws.push(Array<string>(n).fill(EMPTY_P).join("\n"));
+  c.shapes.push("empty paragraphs");
+  return `${PH_OPEN}${EMPTY_P}×${n}${PH_CLOSE}`;
+}
+const EMPTY_RUN = /^\[p\]\[\/p\]×([1-9]\d{0,5})$/;
 
 /** Read a placeholder starting at `i` (which holds ⟦). Returns raw text and end index. */
 function readPlaceholder(md: string, i: number): { raw: string; end: number } | undefined {
   let raw = "";
+  let literal = "";
   for (let j = i + 1; j < md.length; j++) {
-    const c = md.charAt(j);
-    if (c === "\\" && j + 1 < md.length) {
+    const ch = md.charAt(j);
+    if (ch === "\\" && j + 1 < md.length) {
       raw += md.charAt(j + 1);
+      literal += ch + md.charAt(j + 1);
       j++;
-    } else if (c === PH_CLOSE) {
+    } else if (ch === PH_CLOSE) {
+      // ⟦[p][/p]×N⟧ (unescaped ×) stands for N empty paragraphs, one per line.
+      const run = EMPTY_RUN.exec(literal);
+      if (run) raw = Array<string>(Number(run[1])).fill(EMPTY_P).join("\n");
       return { raw, end: j + 1 };
-    } else raw += c;
+    } else {
+      raw += ch;
+      literal += ch;
+    }
   }
   return undefined;
 }
@@ -173,14 +189,18 @@ function tokenizeBbcode(bb: string): BbToken[] {
   return out;
 }
 
-const EMPHASIS: Record<string, { md: string; open: boolean; kind: "b" | "i" }> = {
+type EmphasisKind = "b" | "i" | "s";
+const EMPHASIS: Record<string, { md: string; open: boolean; kind: EmphasisKind }> = {
   "[b]": { md: "**", open: true, kind: "b" },
   "[/b]": { md: "**", open: false, kind: "b" },
   "[i]": { md: "*", open: true, kind: "i" },
   "[/i]": { md: "*", open: false, kind: "i" },
+  "[s]": { md: "~~", open: true, kind: "s" },
+  "[/s]": { md: "~~", open: false, kind: "s" },
 };
+const DELIM_TAG: Record<string, EmphasisKind> = { "**": "b", "*": "i", "~~": "s" };
 
-/** Indexes of [b]/[i] tags that pair up properly (same kind, well nested). */
+/** Indexes of [b]/[i]/[s] tags that pair up properly (same kind, well nested). */
 function matchedEmphasis(tokens: BbToken[]): Set<number> {
   const ok = new Set<number>();
   const stack: { kind: string; index: number }[] = [];
@@ -199,16 +219,16 @@ function matchedEmphasis(tokens: BbToken[]): Set<number> {
   return ok;
 }
 
-/** Escape plain text. Level 0: only what must be escaped; level 1: every `*` too. */
+/** Escape plain text. Level 0: only what must be escaped; level 1: every `*` and `~` too. */
 function escapeText(s: string, level: 0 | 1): string {
   let out = "";
   for (let i = 0; i < s.length; i++) {
-    const c = s.charAt(i);
+    const ch = s.charAt(i);
     const next = s.charAt(i + 1);
-    if (c === PH_OPEN || c === PH_CLOSE) out += "\\" + c;
-    else if (c === "\\" && (next === "" || ESCAPABLE.has(next))) out += "\\\\";
-    else if (c === "*" && level === 1) out += "\\*";
-    else out += c;
+    if (ch === PH_OPEN || ch === PH_CLOSE) out += "\\" + ch;
+    else if (ch === "\\" && (next === "" || ESCAPABLE.has(next))) out += "\\\\";
+    else if ((ch === "*" || ch === "~") && level === 1) out += "\\" + ch;
+    else out += ch;
   }
   return out;
 }
@@ -217,9 +237,9 @@ interface InlineOptions {
   /** Paragraph: [br] becomes a line break. Plain: newlines are literal, [br] a placeholder. */
   mode: TextMode;
   escapeLevel: 0 | 1;
-  /** Keep [br] as a placeholder (e.g. a trailing or doubled line break). */
+  /** Keep [br] as a placeholder. */
   brPlaceholder?: boolean;
-  /** Keep [b]/[i] as placeholders (last resort before raw). */
+  /** Keep [b]/[i]/[s] as placeholders (last resort before raw). */
   noEmphasis?: boolean;
 }
 
@@ -234,7 +254,7 @@ const ATTEMPTS: Omit<InlineOptions, "mode">[] = [
 /** Shape of an inline tag kept as a placeholder. */
 function inlineShape(tag: string, o: InlineOptions): string {
   if (o.mode === "plain") return "tag in a plain-mode field";
-  if (EMPHASIS[tag]) return "unpaired or crossing [b]/[i]";
+  if (EMPHASIS[tag]) return "unpaired or crossing [b]/[i]/[s]";
   if (tag === "[br]") return "[br] kept as placeholder";
   return "inline tag without a Markdown form";
 }
@@ -253,8 +273,8 @@ function inlineToMarkdown(bb: string, o: InlineOptions, c: Collector): string {
     else if (o.mode === "paragraph" && t.value === "[br]" && !o.brPlaceholder) md += "\n";
     else md += placeholder(t.value, c, inlineShape(t.value, o));
   });
-  // Inside a paragraph, an empty line (from adjacent [br], or a [br] at either end)
-  // is written as a line holding only "\", so it cannot be read as a paragraph break.
+  // Inside a paragraph, an empty line is a line holding only "\", so it cannot
+  // be read as a paragraph break.
   if (o.mode === "paragraph" && md.includes("\n")) {
     md = md
       .split("\n")
@@ -270,7 +290,7 @@ function inlineToMarkdown(bb: string, o: InlineOptions, c: Collector): string {
 type MdToken =
   | { kind: "text"; value: string }
   | { kind: "raw"; value: string } // placeholder or mention: copied as is
-  | { kind: "delim"; value: "**" | "*" }
+  | { kind: "delim"; value: "**" | "*" | "~~" }
   | { kind: "newline" };
 
 function tokenizeMarkdown(md: string, mode: TextMode): MdToken[] {
@@ -281,10 +301,10 @@ function tokenizeMarkdown(md: string, mode: TextMode): MdToken[] {
     text = "";
   };
   for (let i = 0; i < md.length;) {
-    const c = md.charAt(i);
+    const ch = md.charAt(i);
     // A line holding only "\" is an empty line inside a paragraph.
     if (
-      c === "\\" &&
+      ch === "\\" &&
       mode === "paragraph" &&
       (i === 0 || md.charAt(i - 1) === "\n") &&
       (i + 1 === md.length || md.charAt(i + 1) === "\n")
@@ -292,12 +312,12 @@ function tokenizeMarkdown(md: string, mode: TextMode): MdToken[] {
       i++;
       continue;
     }
-    if (c === "\\" && i + 1 < md.length && ESCAPABLE.has(md.charAt(i + 1))) {
+    if (ch === "\\" && i + 1 < md.length && ESCAPABLE.has(md.charAt(i + 1))) {
       text += md.charAt(i + 1);
       i += 2;
       continue;
     }
-    if (c === PH_OPEN) {
+    if (ch === PH_OPEN) {
       const p = readPlaceholder(md, i);
       if (p) {
         flush();
@@ -306,7 +326,7 @@ function tokenizeMarkdown(md: string, mode: TextMode): MdToken[] {
         continue;
       }
     }
-    if (c === "@") {
+    if (ch === "@") {
       const m = MENTION_AT.exec(md.slice(i));
       if (m) {
         flush();
@@ -315,24 +335,26 @@ function tokenizeMarkdown(md: string, mode: TextMode): MdToken[] {
         continue;
       }
     }
-    if (c === "*") {
+    if (ch === "*") {
       flush();
-      if (md.charAt(i + 1) === "*") {
-        out.push({ kind: "delim", value: "**" });
-        i += 2;
-      } else {
-        out.push({ kind: "delim", value: "*" });
-        i += 1;
-      }
+      const two = md.charAt(i + 1) === "*";
+      out.push({ kind: "delim", value: two ? "**" : "*" });
+      i += two ? 2 : 1;
       continue;
     }
-    if (c === "\n" && mode === "paragraph") {
+    if (ch === "~" && md.charAt(i + 1) === "~") {
+      flush();
+      out.push({ kind: "delim", value: "~~" });
+      i += 2;
+      continue;
+    }
+    if (ch === "\n" && mode === "paragraph") {
       flush();
       out.push({ kind: "newline" });
       i++;
       continue;
     }
-    text += c;
+    text += ch;
     i++;
   }
   flush();
@@ -359,7 +381,7 @@ function inlineToBbcode(md: string, mode: TextMode): string {
     else if (t.kind === "newline") bb += "[br]";
     else {
       const r = role.get(index);
-      const tag = t.value === "**" ? "b" : "i";
+      const tag = DELIM_TAG[t.value] ?? "b";
       bb += r === "open" ? `[${tag}]` : r === "close" ? `[/${tag}]` : t.value;
     }
   });
@@ -367,32 +389,49 @@ function inlineToBbcode(md: string, mode: TextMode): string {
 }
 
 // ---------------------------------------------------------------------------
-// Blocks (paragraph mode)
+// Blocks
 
 const P_BLOCK = /^\[p\]([\s\S]*)\[\/p\]$/;
 const H_BLOCK = /^\[h([1-6])(?:\|([A-Za-z0-9-]{1,100}))?\]([\s\S]*)\[\/h\1\]$/;
+const QUOTE_BLOCK = /^\[quote\]([\s\S]*)\[\/quote\]$/;
 const MD_HEADING = /^(#{1,6}) ([^\n]*?)(?: \{#([A-Za-z0-9-]{1,100})\})?$/;
-const LIST_OPEN = "[ul]";
-const LIST_CLOSE = "[/ul]";
-/** Editor list item: "- text" (level 1) or "-- text" (level 2). */
-const BB_ITEM = /^(--?) ([\s\S]*)$/;
-/** Markdown list item: "- text" (level 1) or "  - text" (level 2). */
-const MD_ITEM = /^( {2})?- (.*)$/;
+const LISTS = { "[ul]": "[/ul]", "[ol]": "[/ol]" } as const;
+type ListOpen = keyof typeof LISTS;
+/** Editor list item: "- text", "-- text", "--- text" (three levels). */
+const BB_ITEM = /^(-{1,3}) ([\s\S]*)$/;
+/** Markdown bullet item: "- text" indented by 0, 2 or 4 spaces. */
+const MD_BULLET = /^((?: {2}){0,2})- (.*)$/;
+/** Markdown numbered item: "1. text" indented by 0, 3 or 6 spaces. */
+const MD_NUMBERED = /^((?: {3}){0,2})(\d{1,4})\. (.*)$/;
 
 const isSidebarBlock = (block: string) => block.split("\n").every((l) => SIDEBAR_LINE.test(l));
-const isListBlock = (block: string) => block.split("\n").every((l) => MD_ITEM.test(l));
+const allLines = (block: string, re: RegExp) => block.split("\n").every((l) => re.test(l));
 
 /** Markdown block → BBCode block. */
 function mdBlockToBbcode(block: string): string {
   const raw = singlePlaceholder(block);
   if (raw !== undefined) return raw;
+  if (block === "---") return "[hr]";
   if (isSidebarBlock(block)) return block;
-  if (isListBlock(block)) {
+  const bullets = allLines(block, MD_BULLET);
+  if (bullets || allLines(block, MD_NUMBERED)) {
+    const re = bullets ? MD_BULLET : MD_NUMBERED;
+    const width = bullets ? 2 : 3;
     const items = block.split("\n").map((l) => {
-      const m = MD_ITEM.exec(l);
-      return `${m?.[1] ? "--" : "-"} ${inlineToBbcode(m?.[2] ?? "", "plain")}`;
+      const m = re.exec(l);
+      const level = (m?.[1]?.length ?? 0) / width + 1;
+      const text = (bullets ? m?.[2] : m?.[3]) ?? "";
+      return `${"-".repeat(level)} ${inlineToBbcode(text, "plain")}`;
     });
-    return `${LIST_OPEN}\n${items.join("\n")}\n${LIST_CLOSE}`;
+    const [open, close] = bullets ? ["[ul]", "[/ul]"] : ["[ol]", "[/ol]"];
+    return `${open}\n${items.join("\n")}\n${close}`;
+  }
+  if (allLines(block, /^> /)) {
+    const inner = block
+      .split("\n")
+      .map((l) => l.slice(2))
+      .join("\n");
+    return `[quote]${inlineToBbcode(inner, "paragraph")}[/quote]`;
   }
   const h = MD_HEADING.exec(block);
   if (h) {
@@ -407,6 +446,7 @@ function mdBlockToBbcode(block: string): string {
 function safeBlock(md: string, block: string): boolean {
   return (
     md.length > 0 &&
+    md.trim() !== "" &&
     !md.includes("\n\n") &&
     !md.startsWith("\n") &&
     !md.endsWith("\n") &&
@@ -414,136 +454,181 @@ function safeBlock(md: string, block: string): boolean {
   );
 }
 
-/** Escape what, at the start of a line, would read as a heading, a list item or a sidebar line. */
+/** Escape what, at the start of a line, would read as a heading, list, quote, rule or sidebar line. */
 function escapeLineStarts(md: string): string {
   return md
     .split("\n")
-    .map((l) =>
-      /^#{1,6} /.test(l) || /^( {2})?- /.test(l) || SIDEBAR_LINE.test(l)
-        ? l.replace(/^( *)/, "$1\\")
-        : l,
-    )
+    .map((l) => {
+      if (/^\d{1,4}\. /.test(l.trimStart())) return l.replace(/^(\s*\d{1,4})\./, "$1\\.");
+      if (
+        /^#{1,6} /.test(l) ||
+        /^ *- /.test(l) ||
+        /^> /.test(l) ||
+        l === "---" ||
+        SIDEBAR_LINE.test(l)
+      ) {
+        return l.replace(/^( *)/, "$1\\");
+      }
+      return l;
+    })
     .join("\n");
 }
 
-/** Why a whole block stays a placeholder, as a rule name. */
+/** Why a whole block stays a placeholder, as a rule name (no content). */
 function blockShape(block: string): string {
-  if (block === "[p][/p]") return "empty paragraph";
-  if (/^\[h[1-6]\|/.test(block)) return "heading with an unknown parameter";
+  if (block === EMPTY_P) return "empty paragraph";
+  if (/^\[p\]\s+\[\/p\]$/.test(block)) return "blank paragraph";
+  if (/^\[h[1-6]?\|/.test(block) || /^\[h\]/.test(block))
+    return "heading with an unknown parameter";
   if (/^\[h[1-6]\]/.test(block)) return "heading that did not convert back exactly";
-  if (block.startsWith(LIST_OPEN)) return "list in another layout";
+  if (/^\[(ul|ol)\]/.test(block)) return "list in another layout";
+  if (/^\[\] /.test(block)) return "check list";
   if (/\[\/(p|h[1-6])\][ \t]*\S/.test(block)) return "several blocks on one line";
-  if (/^\[p\]/.test(block) && /\[(ul|h[1-6]|p)[\]|]/.test(block.slice(3)))
+  if (/^\[p\]/.test(block) && /\[(ul|ol|h[1-6]|p)[\]|]/.test(block.slice(3))) {
     return "paragraph containing a block tag";
+  }
   if (/^\[p\]/.test(block)) return "paragraph that did not convert back exactly";
+  if (block.includes("\n")) return "lines outside blocks";
+  if (/^-{1,3} /.test(block)) return "list item outside a list";
   if (block.startsWith("[")) return "line wrapped in another tag";
-  return "other block";
+  return block === "" ? "empty line" : "text line outside blocks";
 }
 
-/** One block of a paragraph-mode field → Markdown (a placeholder when not exact). */
-function blockToMarkdown(block: string, c: Collector): string {
-  if (SIDEBAR_LINE.test(block) && mdBlockToBbcode(block) === block) return block;
+type Block =
+  | { kind: "line"; text: string }
+  | { kind: "empty-run"; count: number }
+  | { kind: "loose"; text: string };
 
-  // Lists: [ul]\n- item\n-- sub-item\n[/ul]
-  if (block.startsWith(LIST_OPEN + "\n") && block.endsWith("\n" + LIST_CLOSE)) {
-    const lines = block.slice(LIST_OPEN.length + 1, -(LIST_CLOSE.length + 1)).split("\n");
+/** One block of a paragraph-mode field → Markdown (a placeholder when not exact). */
+function blockToMarkdown(block: Block, c: Collector): string {
+  if (block.kind === "empty-run") {
+    return block.count === 1
+      ? placeholder(EMPTY_P, c, "empty paragraph")
+      : emptyRunPlaceholder(block.count, c);
+  }
+  const text = block.text;
+  if (block.kind === "loose") return placeholder(text, c, blockShape(text));
+  if (text === "[hr]") return "---";
+  if (SIDEBAR_LINE.test(text) && mdBlockToBbcode(text) === text) return text;
+
+  // Lists: [ul] or [ol], one item per line: "- ", "-- ", "--- ".
+  const listOpen = (Object.keys(LISTS) as ListOpen[]).find(
+    (o) => text.startsWith(o + "\n") && text.endsWith("\n" + LISTS[o]),
+  );
+  if (listOpen) {
+    const lines = text.slice(listOpen.length + 1, -(LISTS[listOpen].length + 1)).split("\n");
     if (lines.length && lines.every((l) => BB_ITEM.test(l))) {
       for (const a of ATTEMPTS) {
         const local = collector();
+        const counters = [0, 0, 0];
         const md = lines
           .map((l) => {
             const m = BB_ITEM.exec(l);
-            const text = inlineToMarkdown(m?.[2] ?? "", { mode: "plain", ...a }, local);
-            return `${m?.[1] === "--" ? "  - " : "- "}${text}`;
+            const level = m?.[1]?.length ?? 1;
+            const item = inlineToMarkdown(m?.[2] ?? "", { mode: "plain", ...a }, local);
+            if (listOpen === "[ul]") return `${"  ".repeat(level - 1)}- ${item}`;
+            counters[level - 1] = (counters[level - 1] ?? 0) + 1;
+            for (let k = level; k < 3; k++) counters[k] = 0;
+            return `${"   ".repeat(level - 1)}${counters[level - 1]}. ${item}`;
           })
           .join("\n");
-        if (safeBlock(md, block)) {
+        if (safeBlock(md, text)) {
           absorb(c, local);
           return md;
         }
       }
     }
-    return placeholder(block, c, blockShape(block));
+    return placeholder(text, c, blockShape(text));
   }
 
-  const pInner = P_BLOCK.exec(block)?.[1];
-  const h = H_BLOCK.exec(block);
-  const isP = pInner !== undefined && !/\[\/?p\]/.test(pInner);
-  const source = isP ? pInner : h?.[3];
-  if (source !== undefined) {
+  const pInner = P_BLOCK.exec(text)?.[1];
+  const h = H_BLOCK.exec(text);
+  const q = QUOTE_BLOCK.exec(text)?.[1];
+  const isP = pInner !== undefined && !/\[\/?p\]/.test(pInner) && pInner.trim() !== "";
+  const source = isP ? pInner : (h?.[3] ?? q);
+  if (source !== undefined && (isP || h || !/\[\/?quote\]/.test(q ?? ""))) {
     for (const a of ATTEMPTS) {
       const local = collector();
       const inner = inlineToMarkdown(source, { mode: "paragraph", ...a }, local);
       // Escape line starts only when the unescaped text would read as something else.
-      const candidates = isP
-        ? [inner, escapeLineStarts(inner)]
-        : [`${"#".repeat(Number(h?.[1]))} ${inner}${h?.[2] ? ` {#${h[2]}}` : ""}`];
+      let candidates: string[];
+      if (isP) candidates = [inner, escapeLineStarts(inner)];
+      else if (h) candidates = [`${"#".repeat(Number(h[1]))} ${inner}${h[2] ? ` {#${h[2]}}` : ""}`];
+      else {
+        const quoted = (s: string) =>
+          s
+            .split("\n")
+            .map((l) => `> ${l}`)
+            .join("\n");
+        candidates = [quoted(inner), quoted(escapeLineStarts(inner))];
+      }
       for (const md of candidates) {
-        if (safeBlock(md, block)) {
+        if (safeBlock(md, text)) {
           absorb(c, local);
           return md;
         }
       }
     }
   }
-  return placeholder(block, c, blockShape(block));
+  return placeholder(text, c, blockShape(text));
 }
+
+/** A line that may stand as a block by itself. */
+const isBlockLine = (l: string) =>
+  SIDEBAR_LINE.test(l) || (l.startsWith("[") && l.endsWith("]") && !/^\[\] /.test(l));
 
 /**
- * Split a field written in the editor's layout into blocks: [p] lines, heading
- * lines, [ul]…[/ul] lists, sidebar lines and other tag-wrapped lines; blank
- * characters around the field are kept apart.
+ * Split a field into blocks: tag-wrapped lines, [ul]/[ol] lists, sidebar lines,
+ * runs of empty paragraphs, and runs of other lines (kept as one placeholder
+ * each). Blank characters around the field are kept apart.
  */
-/** Shape of a line that is not a block, as a rule name (no content). */
-function lineShape(l: string): string {
-  if (l.endsWith("\r")) return "line ends with CR";
-  if (/^--/.test(l) && l.includes("::")) {
-    if (/^-- /.test(l)) return "sidebar-like line: space after --";
-    if (/\s$/.test(l)) return "sidebar-like line: trailing blank";
-    if (!/--$/.test(l)) return "sidebar-like line: no closing --";
-    return "sidebar-like line: other";
-  }
-  if (/^--?\s/.test(l)) return "list item outside [ul]";
-  if (/^\[p\]/.test(l)) return "paragraph continues on the next line (raw newline inside [p])";
-  if (/\[\/p\]$/.test(l)) return "paragraph continued from the previous line";
-  if (l.startsWith("[")) return "line starts with a tag but ends with text";
-  if (l.endsWith("]")) return "line ends with a tag but starts with text";
-  if (/\[[A-Za-z]/.test(l)) return "text line with tags inside";
-  return "text line without tags";
-}
-
-type BlockSplit = { lead: string; trail: string; blocks: string[] };
-
-function paragraphBlocks(bb: string): BlockSplit | { reason: FallbackReason; detail?: string } {
+function splitBlocks(bb: string): { lead: string; trail: string; blocks: Block[] } | undefined {
   const lead = /^[ \t\r\n]*/.exec(bb)?.[0] ?? "";
   const core = bb.slice(lead.length);
   const trail = /[ \t\r\n]*$/.exec(core)?.[0] ?? "";
   const body = core.slice(0, core.length - trail.length);
-  if (!/\[p\]|\[h[1-6][\]|]|\[ul\]/.test(body)) return { reason: "no-block-tags" };
   const lines = body.split("\n");
-  const blocks: string[] = [];
+  const blocks: Block[] = [];
+  let loose: string[] = [];
+  const flushLoose = () => {
+    if (loose.length) blocks.push({ kind: "loose", text: loose.join("\n") });
+    loose = [];
+  };
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i] ?? "";
-    if (l === LIST_OPEN) {
-      const end = lines.indexOf(LIST_CLOSE, i + 1);
-      if (end < 0) return { reason: "unclosed-list" };
-      blocks.push(lines.slice(i, end + 1).join("\n"));
-      i = end;
+    const close = LISTS[l as ListOpen] as string | undefined;
+    if (close) {
+      const end = lines.indexOf(close, i + 1);
+      if (end > i) {
+        flushLoose();
+        blocks.push({ kind: "line", text: lines.slice(i, end + 1).join("\n") });
+        i = end;
+        continue;
+      }
+    }
+    if (l === EMPTY_P) {
+      flushLoose();
+      const last = blocks.at(-1);
+      if (last?.kind === "empty-run") last.count++;
+      else blocks.push({ kind: "empty-run", count: 1 });
       continue;
     }
-    if (l === "") return { reason: "empty-line" };
-    if (SIDEBAR_LINE.test(l) || (l.startsWith("[") && l.endsWith("]"))) blocks.push(l);
-    else return { reason: "line-outside-blocks", detail: lineShape(l) };
+    if (isBlockLine(l)) {
+      flushLoose();
+      blocks.push({ kind: "line", text: l });
+    } else loose.push(l);
   }
-  return { lead, trail, blocks };
+  flushLoose();
+  // A field with no block at all (plain text) reads better in plain mode.
+  return blocks.some((b) => b.kind !== "loose") ? { lead, trail, blocks } : undefined;
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 
 /** Private-use character marking protected placeholders while splitting blocks. */
-const SENTINEL = "\uE000";
-const SENTINEL_RE = /\uE000(\d+)\uE000/g;
+const SENTINEL = "";
+const SENTINEL_RE = /(\d+)/g;
 
 export function bbcodeToMarkdown(bb: string): MarkdownView {
   const view = (
@@ -563,30 +648,47 @@ export function bbcodeToMarkdown(bb: string): MarkdownView {
   });
   if (bb === "") return view("", PARAGRAPH, collector());
 
-  const split = paragraphBlocks(bb);
-  let why: { fallbackReason: FallbackReason; fallbackDetail?: string };
-  if ("reason" in split) why = { fallbackReason: split.reason, fallbackDetail: split.detail };
-  else {
-    const c = collector();
-    const markdown = split.blocks.map((b) => blockToMarkdown(b, c)).join("\n\n");
+  let reason: FallbackReason = "no-block-tags";
+  const split = /\[p\]|\[h[1-6]?[\]|]|\[ul\]|\[ol\]|\[quote\]|\[hr\]/.test(bb)
+    ? splitBlocks(bb)
+    : undefined;
+  if (split) {
     const layout: Layout = { mode: "paragraph", lead: split.lead, trail: split.trail };
-    if (markdownToBbcode(markdown, layout) === bb) return view(markdown, layout, c);
-    why = { fallbackReason: "paragraph-check-failed" };
+    const c = collector();
+    const mds = split.blocks.map((b) => blockToMarkdown(b, c));
+    const markdown = mds.join("\n\n");
+    // Paragraph mode only pays off when at least one block reads as text; otherwise plain mode
+    // (tags as placeholders around readable text) is easier to read.
+    const readable = mds.some((md) => singlePlaceholder(md) === undefined);
+    if (readable && markdownToBbcode(markdown, layout) === bb) return view(markdown, layout, c);
+    // Should not happen (every block is checked); keep paragraph mode with every block raw.
+    const r = collector();
+    const raw = split.blocks
+      .map((b) =>
+        b.kind === "empty-run"
+          ? blockToMarkdown(b, r)
+          : placeholder(b.text, r, "block kept raw after a whole-field check"),
+      )
+      .join("\n\n");
+    if (readable && markdownToBbcode(raw, layout) === bb) return view(raw, layout, r);
+    reason = readable ? "paragraph-check-failed" : "no-readable-block";
   }
 
   for (const a of ATTEMPTS) {
     const c = collector();
     const md = inlineToMarkdown(bb, { mode: "plain", ...a }, c);
-    if (markdownToBbcode(md, PLAIN) === bb) return view(md, PLAIN, c, why);
+    if (markdownToBbcode(md, PLAIN) === bb) return view(md, PLAIN, c, { fallbackReason: reason });
   }
   const c = collector();
-  return view(placeholder(bb, c, "whole field"), PLAIN, c, { rawFallback: true, ...why });
+  return view(placeholder(bb, c, "whole field"), PLAIN, c, {
+    rawFallback: true,
+    fallbackReason: reason,
+  });
 }
 
 export function markdownToBbcode(md: string, layout: Layout | TextMode): string {
   const l: Layout = typeof layout === "string" ? { mode: layout, lead: "", trail: "" } : layout;
-  // Plain mode keeps every byte, CRLF included. Paragraph mode (the editor's
-  // form, which never holds CR inside the text) accepts Markdown typed with CRLF.
+  // Plain mode keeps every byte, CRLF included. Paragraph mode accepts Markdown typed with CRLF.
   if (l.mode === "plain") return inlineToBbcode(md, "plain");
   const text = md.replace(/\r\n/g, "\n");
   if (text.trim() === "") return "";
@@ -630,9 +732,17 @@ export function writeLayoutFor(current: string | undefined): Layout {
 // ---------------------------------------------------------------------------
 // Helpers for writes
 
-/** Mentions in a BBCode string: type (exact case) and id. */
+/**
+ * Element references inside text: @[Name](Type:id) mentions, and tag links
+ * [category:<id>], [timeline:<id>], [secret:<id>], [img:<id>|…]. Type keeps its exact case.
+ */
 export function mentionsIn(bb: string): { type: string; id: string }[] {
-  return [...bb.matchAll(MENTION_GLOBAL)].map((m) => ({ type: m[2] ?? "", id: m[3] ?? "" }));
+  const mentions = [...bb.matchAll(MENTION_GLOBAL)].map((m) => ({
+    type: m[2] ?? "",
+    id: m[3] ?? "",
+  }));
+  const tags = [...bb.matchAll(TAG_LINK_GLOBAL)].map((m) => ({ type: m[1] ?? "", id: m[2] ?? "" }));
+  return [...mentions, ...tags];
 }
 
 /** Count of each structural item: tag names (lowercase), mentions, sidebar lines. */

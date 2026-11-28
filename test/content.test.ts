@@ -319,3 +319,49 @@ describe("layouts seen live", () => {
     );
   });
 });
+
+describe("element links written as tags", () => {
+  it("checks a new [category:…] or [timeline:…] link against the world", async () => {
+    const { call, fake } = await connect();
+    const other = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      fields: { content: "Voir ⟦[category:category-open-0001]⟧cat⟦[/category]⟧." },
+    });
+    expect(other.text).toMatch(
+      /mentions category "category-open-0001", which is not in the same world/,
+    );
+    const tl = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      fields: { content: "⟦[timeline:timeline-open-0001]⟧chrono⟦[/timeline]⟧" },
+    });
+    expect(tl.text).toMatch(/not in the same world/);
+    expect(puts(fake.calls)).toHaveLength(0);
+    const ok = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      fields: { content: "Voir ⟦[category:category-edit-0001]⟧cat⟦[/category]⟧." },
+    });
+    expect(ok.isError, ok.text).toBe(false);
+    expect(puts(fake.calls).at(-1)!.content).toBe(
+      "[p]Voir [category:category-edit-0001]cat[/category].[/p]",
+    );
+  });
+
+  it("refuses a new image embed it cannot check, but keeps existing ones", async () => {
+    const { call } = await connect({ data: withContent("[p]a[/p]\n[img:123|none]") });
+    const created = await call("wa_create_article", {
+      world_id: EDIT_WORLD,
+      title: "X",
+      fields: { content: "⟦[img:456|none]⟧" },
+    });
+    expect(created.text).toMatch(/cannot be checked against the world \(unknown type\)/);
+    await call("wa_get", { type: "article", id: "article-edit-0001" });
+    const kept = await call("wa_update_article", {
+      id: "article-edit-0001",
+      append: { content: "Suite." },
+    });
+    expect(kept.isError, kept.text).toBe(false);
+  });
+});

@@ -74,6 +74,8 @@ export const KNOWN_TAGS = new Set([
   "tooltip",
   "ooc",
   "inline",
+  "h",
+  "category",
 ]);
 
 /** A tag token; group 4 is a self-closing slash ("[br/]", "[br /]"). */

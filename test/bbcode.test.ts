@@ -81,6 +81,13 @@ const FIXTURES: Record<string, string> = {
   "literal backslash lines": "[p]\\[br]\\\\[br]a\\[/p]",
   "raw newline inside a paragraph": "[p]a\nb[/p]",
   "sidebar-like line with a space after --": "[p]a[/p]\n-- Clé::Valeur--",
+  "sample article made with the editor buttons":
+    `[h1|${U}]T1[/h1]\n[h2|${U}]T2[/h2]\n[h3|${U}]T3[/h3]\n[h4|${U}]T4[/h4]\n[h5|${U}]T5[/h5]\n[h|${U}]Th[/h]\n[p][u]souligné[/u] [s]barré[/s][/p]\n[ol]\n- un\n-- deux\n--- trois\n- \n[/ol]\n[] case un[br]\n[] case deux[br]\n[p]Voir [category:${U}]cat[/category] et [timeline:${U}]chrono[/timeline].[/p]\n[p]https://example.invalid/page[/p]\n--Clé::Valeur-- \n[table][tr][th]A[/th][th]B[/th][/tr][tr][td]1[/td][td]2[/td][/tr][/table]\n[center][p]centré [color:#00ff00]vert[/color][/p][/center]\n[right][p]droite[/p][/right]\n[quote]Une citation.[/quote]\n[aloud]À voix haute[/aloud]\n[spoiler]Caché[/spoiler]\n[hr]\n[p] [/p]\n[p][br][br][/p]\n[secret:${U}]\n[img:123|none]\n` +
+    Array<string>(234).fill("[p][/p]").join("\n") +
+    "\n",
+  "ul with three levels and an empty item": "[ul]\n- a\n-- b\n--- c\n- \n[/ul]",
+  "check list lines": "[p]Liste[/p]\n[] un[br]\n[] deux[br]\n[p]Fin[/p]",
+  "sidebar line with a trailing blank between paragraphs": "[p]a[/p]\n--Clé::Valeur-- \n[p]b[/p]",
   "sidebar lines between paragraphs":
     "[p]Intro[/p]\n--Population::12--\n--Ruler::Invented--\n[p]Fin[/p]",
   "sidebar line inside a paragraph": "[p]--Population::12--[br]--Ruler::Invented--[/p]",
@@ -151,6 +158,29 @@ describe("BBCode → Markdown → BBCode is byte-identical", () => {
       "\\\n",
       "[br][br]",
       "--A::b--\n",
+      "[s]",
+      "[/s]",
+      "~~",
+      "~",
+      "[hr]",
+      "[quote]",
+      "[/quote]",
+      "> ",
+      "[ol]",
+      "[/ol]",
+      "\n--- ",
+      "1. ",
+      "   2. ",
+      "[] ",
+      `[category:${U}]`,
+      "[/category]",
+      "×",
+      "[p][/p]\n[p][/p]",
+      "[table][tr][td]x[/td][/tr][/table]",
+      "[center]",
+      `[h|${U}]`,
+      "[p] [/p]",
+      ".",
     ];
     let seed = 42;
     const rand = () => {
@@ -178,7 +208,7 @@ describe("readable Markdown for the editor's forms", () => {
 
   it("empty paragraphs show as explicit placeholders", () => {
     expect(bbcodeToMarkdown(FIXTURES["empty paragraphs"]!).markdown).toBe(
-      "Un.\n\n⟦[p][/p]⟧\n\n⟦[p][/p]⟧\n\nDeux.",
+      "Un.\n\n⟦[p][/p]×2⟧\n\nDeux.",
     );
   });
 
@@ -239,7 +269,7 @@ describe("readable Markdown for the editor's forms", () => {
   it("interleaved empty paragraphs stay on their own lines without leaving paragraph mode", () => {
     const v = bbcodeToMarkdown(FIXTURES["empty paragraphs interleaved"]!);
     expect(v.mode).toBe("paragraph");
-    expect(v.markdown).toBe("a\n\n⟦[p][/p]⟧\n\nb\n\n⟦[p][/p]⟧\n\n⟦[p][/p]⟧\n\nc");
+    expect(v.markdown).toBe("a\n\n⟦[p][/p]⟧\n\nb\n\n⟦[p][/p]×2⟧\n\nc");
   });
 
   it("a trailing newline keeps the field in paragraph mode and is put back on write", () => {
@@ -279,37 +309,109 @@ describe("readable Markdown for the editor's forms", () => {
     expect(markdownToBbcode("a\n\\\nb", "paragraph")).toBe("[p]a[br][br]b[/p]");
   });
 
-  it("names the rule behind each placeholder and each plain-mode fallback, without content", () => {
+  it("names the rule behind each placeholder, without content", () => {
     expect(bbcodeToMarkdown("[p]a[/p]\n[p][/p]").placeholderShapes).toEqual(["empty paragraph"]);
-    expect(bbcodeToMarkdown("[p]a[/p][p]b[/p]").placeholderShapes).toEqual([
+    expect(bbcodeToMarkdown("[p]a[/p]\n[p][/p]\n[p][/p]").placeholderShapes).toEqual([
+      "empty paragraphs",
+    ]);
+    expect(bbcodeToMarkdown("[p]x[/p]\n[p]a[/p][p]b[/p]").placeholderShapes).toEqual([
       "several blocks on one line",
     ]);
     expect(bbcodeToMarkdown("[p]x [u]y[/u][/p]").placeholderShapes).toEqual([
       "inline tag without a Markdown form",
       "inline tag without a Markdown form",
     ]);
-    expect(bbcodeToMarkdown("[p]a[/p]\n-- Clé::Valeur--")).toMatchObject({
-      fallbackReason: "line-outside-blocks",
-      fallbackDetail: "sidebar-like line: space after --",
-    });
-    expect(bbcodeToMarkdown("[p]a\nb[/p]").fallbackDetail).toBe(
-      "paragraph continues on the next line (raw newline inside [p])",
-    );
-    expect(bbcodeToMarkdown("[p]a[/p]\ntexte").fallbackDetail).toBe("text line without tags");
-    expect(bbcodeToMarkdown("[p]a[/p]\n- item").fallbackDetail).toBe("list item outside [ul]");
+    expect(bbcodeToMarkdown("[p]a[/p]\n-- Clé::Valeur-- ").placeholderShapes).toEqual([
+      "list item outside a list",
+    ]);
+    expect(bbcodeToMarkdown("[p]a[/p]\ntexte").placeholderShapes).toEqual([
+      "text line outside blocks",
+    ]);
+    expect(bbcodeToMarkdown("[p]a[/p]\n[] un[br]\n[] deux[br]").placeholderShapes).toEqual([
+      "check list",
+    ]);
     expect(
-      bbcodeToMarkdown("[p]a[/p]\ntexte").placeholderShapes.every(
-        (x) => x === "tag in a plain-mode field",
-      ),
-    ).toBe(true);
+      bbcodeToMarkdown("[p]a[/p]\n[table][tr][td]x[/td][/tr][/table]").placeholderShapes,
+    ).toEqual(["line wrapped in another tag"]);
+    expect(bbcodeToMarkdown(`[h|${U}]T[/h]\n[p]a[/p]`).placeholderShapes).toEqual([
+      "heading with an unknown parameter",
+    ]);
+    expect(bbcodeToMarkdown("[p] [/p]\n[p]a[/p]").placeholderShapes).toEqual(["blank paragraph"]);
   });
 
-  it("reports why a field stays in plain mode", () => {
+  it("only a field with no block at all is in plain mode", () => {
     expect(bbcodeToMarkdown("Ligne\nLigne").fallbackReason).toBe("no-block-tags");
-    expect(bbcodeToMarkdown("[p]a[/p]\ntexte libre").fallbackReason).toBe("line-outside-blocks");
-    expect(bbcodeToMarkdown("[p]a[/p]\n\n[p]b[/p]").fallbackReason).toBe("empty-line");
-    expect(bbcodeToMarkdown("[ul]\n- a").fallbackReason).toBe("unclosed-list");
+    expect(bbcodeToMarkdown("[p]a[/p]\ntexte libre").mode).toBe("paragraph");
+    expect(bbcodeToMarkdown("[p]a[/p]\n\n[p]b[/p]").mode).toBe("paragraph");
+    expect(bbcodeToMarkdown("[ul]\n- a").mode).toBe("plain"); // no block reads as text
+    expect(bbcodeToMarkdown("[ul]\n- a").fallbackReason).toBe("no-readable-block");
     expect(bbcodeToMarkdown("[p]a[/p]").fallbackReason).toBeUndefined();
+  });
+
+  it("a block that does not convert is one placeholder on its own line; the rest stays readable", () => {
+    const v = bbcodeToMarkdown("[p]Avant[/p]\n- hors liste\n-- encore\n[p]Après[/p]");
+    expect(v.mode).toBe("paragraph");
+    expect(v.markdown).toBe("Avant\n\n⟦- hors liste\n-- encore⟧\n\nAprès");
+    const t = bbcodeToMarkdown(
+      "[p]a[/p]\n[center][p]centré [color:#ff0000]rouge[/color][/p][/center]\n[p]b[/p]",
+    );
+    expect(t.markdown).toBe(
+      "a\n\n⟦[center][p]centré [color:#ff0000]rouge[/color][/p][/center]⟧\n\nb",
+    );
+  });
+
+  it("a long run of empty paragraphs is one compact placeholder, restored exactly", () => {
+    const bb = "[p]Fin.[/p]\n" + Array<string>(234).fill("[p][/p]").join("\n") + "\n";
+    const v = bbcodeToMarkdown(bb);
+    expect(v.markdown).toBe("Fin.\n\n⟦[p][/p]×234⟧");
+    expect(markdownToBbcode(v.markdown, v.layout)).toBe(bb);
+  });
+
+  it("a × inside an ordinary placeholder is escaped, so it is never read as a run", () => {
+    const bb = "[p]a[/p]\n[p][/p]×3";
+    expect(roundTrip(bb)).toBe(bb);
+    expect(bbcodeToMarkdown(bb).markdown).toContain("\\×");
+  });
+
+  it("converts [s], [hr], one-line [quote] and headings h1–h5 with an id", () => {
+    const bb = `[h1|${U}]Un[/h1]\n[h5|${U}]Cinq[/h5]\n[p]a [s]barré[/s][/p]\n[hr]\n[quote]Citation [b]forte[/b][/quote]`;
+    const v = bbcodeToMarkdown(bb);
+    expect(v.hasPlaceholders).toBe(false);
+    expect(v.markdown).toBe(
+      `# Un {#${U}}\n\n##### Cinq {#${U}}\n\na ~~barré~~\n\n---\n\n> Citation **forte**`,
+    );
+    expect(markdownToBbcode(v.markdown, v.layout)).toBe(bb);
+  });
+
+  it("converts [ul] and [ol] lists with three levels; [ol] reads as a numbered list", () => {
+    const ul = "[ul]\n- un\n-- deux\n--- trois\n- \n[/ul]";
+    expect(bbcodeToMarkdown(ul).markdown).toBe("- un\n  - deux\n    - trois\n- ");
+    const ol = "[ol]\n- un\n-- un.un\n-- un.deux\n--- profond\n- deux\n-- deux.un\n[/ol]";
+    expect(bbcodeToMarkdown(ol).markdown).toBe(
+      "1. un\n   1. un.un\n   2. un.deux\n      1. profond\n2. deux\n   1. deux.un",
+    );
+    expect(roundTrip(ol)).toBe(ol);
+    expect(markdownToBbcode("1. a\n   7. b\n3. c", "paragraph")).toBe(
+      "[ol]\n- a\n-- b\n- c\n[/ol]",
+    );
+  });
+
+  it("category and timeline links keep their tags as placeholders around readable text", () => {
+    const bb = `[p]Voir [category:${U}]la catégorie[/category] et [timeline:${U}]la chronologie[/timeline].[/p]`;
+    expect(bbcodeToMarkdown(bb).markdown).toBe(
+      `Voir ⟦[category:${U}]⟧la catégorie⟦[/category]⟧ et ⟦[timeline:${U}]⟧la chronologie⟦[/timeline]⟧.`,
+    );
+    expect(mentionsIn(bb)).toEqual([
+      { type: "category", id: U },
+      { type: "timeline", id: U },
+    ]);
+  });
+
+  it("a paragraph that would read as a list, quote, rule or numbered item is escaped", () => {
+    const bb = "[p]1. pas une liste[/p]\n[p]> pas une citation[/p]\n[p]---[/p]";
+    expect(bbcodeToMarkdown(bb).markdown).toBe(
+      "1\\. pas une liste\n\n\\> pas une citation\n\n\\---",
+    );
   });
 
   it("plain fields keep their lines and sidebar key-value lines untouched", () => {

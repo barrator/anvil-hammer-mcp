@@ -75,7 +75,8 @@ describe("BBCode probe", () => {
       const withTag =
         shape.startsWith("tag in") ||
         shape.startsWith("inline tag") ||
-        shape.startsWith("unpaired");
+        shape.startsWith("unpaired") ||
+        shape.startsWith("line wrapped");
       if (!withTag || !tag) return shape;
       return `${shape}: ${KNOWN_TAGS.has(tag) ? `[${tag}]` : "unknown tag"}`;
     };
@@ -86,8 +87,7 @@ describe("BBCode probe", () => {
       if (v.hasPlaceholders) roundTrip.withPlaceholders++;
       if (v.rawFallback) roundTrip.shownWholeRaw++;
       if (v.fallbackReason) {
-        const detail = v.fallbackDetail ? ` (${v.fallbackDetail})` : "";
-        inc(roundTrip.plainModeReasons, `${field}: ${v.fallbackReason}${detail}`);
+        inc(roundTrip.plainModeReasons, `${field}: ${v.fallbackReason}`);
       }
       v.placeholderRaws.forEach((raw, k) =>
         inc(roundTrip.placeholderKinds, kindOf(raw, v.placeholderShapes[k] ?? "other")),
